@@ -44,13 +44,13 @@ final class TransferCenter: ObservableObject {
         }
     }
 
-    func download(file: DriveFile, accountID: String, destination: URL, client: DriveClient) async throws {
+    func download(file: DriveFile, accountID: String, destination: URL, client: DriveClient, reveal: Bool = true) async throws {
         try await run(
             name: file.name,
             accountID: accountID,
             direction: .download,
             total: file.size,
-            reveal: true
+            reveal: reveal
         ) { [self] id in
             let knownSize = file.size
             try await client.download(fileID: file.id, to: destination) { [self] bytes, total in

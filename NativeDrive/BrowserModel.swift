@@ -24,6 +24,7 @@ final class BrowserModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var renameTarget: DriveFile?
     @Published private(set) var nextPageToken: String?
+    @Published var mediaSession: MediaSession?
 
     private var searchTask: Task<Void, Never>?
     private var loadGeneration = 0
@@ -182,20 +183,41 @@ final class BrowserModel: ObservableObject {
             }
             return
         }
-        do {
-            let url = try await ensureLocalFile(file)
-            NSWorkspace.shared.open(url)
-        } catch is CancellationError {
-            return
-        } catch let error as DriveAPIError where error == .cancelled {
-            return
-        } catch {
-            present(error)
+        let kind = MediaClassifier.kind(of: file)
+        switch kind {
+        case .image:
+            presentMedia(kind: .images, playlistKind: .image, file: file)
+        case .playableVideo:
+            presentMedia(kind: .player, playlistKind: .playableVideo, file: file)
+        case .playableAudio:
+            presentMedia(kind: .player, playlistKind: .playableAudio, file: file)
+        case .unsupportedVideo:
+            presentMedia(kind: .unsupported, playlistKind: .unsupportedVideo, file: file)
+        case .other:
+            do {
+                let url = try await ensureLocalFile(file)
+                NSWorkspace.shared.open(url)
+            } catch is CancellationError {
+                return
+            } catch let error as DriveAPIError where error == .cancelled {
+                return
+            } catch {
+                present(error)
+            }
         }
     }
 
     func quickLook(_ file: DriveFile) async {
         if file.isFolder {
+            await open(file)
+            return
+        }
+        let kind = MediaClassifier.kind(of: file)
+        if kind == .image || kind == .playableVideo || kind == .playableAudio || kind == .unsupportedVideo {
+            if kind == .image, mediaSession?.fileID == file.id, mediaSession?.kind == .images {
+                dismissMedia()
+                return
+            }
             await open(file)
             return
         }
@@ -217,6 +239,34 @@ final class BrowserModel: ObservableObject {
 
     func closeQuickLook() {
         quickLook.close()
+        dismissMedia()
+    }
+
+    func dismissMedia() {
+        mediaSession?.stop()
+        mediaSession = nil
+    }
+
+    private func presentMedia(kind: MediaSession.Kind, playlistKind: MediaKind, file: DriveFile) {
+        let playlist = MediaNavigator.playlist(in: files, kind: playlistKind)
+        let items = playlist.isEmpty ? [file] : playlist
+        mediaSession?.stop()
+        let session = MediaSession(
+            kind: kind,
+            playlistKind: playlistKind,
+            playlist: items,
+            startingFileID: file.id,
+            client: client,
+            transfers: transfers,
+            accountID: accountID,
+            downloadRoot: downloadRoot
+        )
+        session.onDismiss = { [weak self, weak session] in
+            guard let self, let session, self.mediaSession === session else { return }
+            self.mediaSession = nil
+        }
+        mediaSession = session
+        session.start()
     }
 
     func copyLink(_ file: DriveFile) {
@@ -544,6 +594,9 @@ final class BrowserModel: ObservableObject {
         files = listing.files
         nextPageToken = listing.nextPageToken
         selection = selection.filter { id in files.contains { $0.id == id } }
+        if let mediaSession {
+            mediaSession.replacePlaylist(files)
+        }
     }
 
     private func applyLocalUpdate(_ file: DriveFile, removeFromCurrent: Bool) {

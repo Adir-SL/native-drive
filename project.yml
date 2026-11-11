@@ -42,6 +42,9 @@ targets:
     dependencies:
       - package: NativeDriveCore
         product: NativeDriveCore
+      - sdk: AVFoundation.framework
+      - sdk: AVKit.framework
+      - sdk: ImageIO.framework
     settings:
       base:
         PRODUCT_NAME: NativeDrive

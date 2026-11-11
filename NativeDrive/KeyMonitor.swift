@@ -48,6 +48,9 @@ struct KeyMonitor: NSViewRepresentable {
 enum KeyRouting {
     static func handle(_ event: NSEvent, browser: BrowserModel?) -> Bool {
         guard let browser else { return false }
+        if browser.mediaSession != nil {
+            return browser.mediaSession?.handleKey(event) ?? false
+        }
         guard let window = event.window, window.isKeyWindow, !window.isSheet else { return false }
         if window.firstResponder is NSTextView { return false }
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.capsLock, .numericPad, .function])

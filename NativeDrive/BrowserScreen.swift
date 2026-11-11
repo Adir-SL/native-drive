@@ -13,6 +13,11 @@ struct BrowserScreen: View {
         } detail: {
             FileBrowserView(browser: browser)
         }
+        .overlay {
+            if let session = browser.mediaSession {
+                MediaOverlay(session: session)
+            }
+        }
         .navigationTitle(browser.title)
         .toolbar { toolbar }
         .searchable(text: searchText, placement: .toolbar, prompt: "Search in Drive")
@@ -83,6 +88,22 @@ struct BrowserScreen: View {
             }
             .help("Transfers")
         }
+    }
+}
+
+struct MediaOverlay: View {
+    @ObservedObject var session: MediaSession
+
+    var body: some View {
+        Group {
+            switch session.kind {
+            case .images:
+                ImageViewer(session: session)
+            case .player, .unsupported:
+                VideoPlayerView(session: session)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
