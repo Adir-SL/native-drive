@@ -110,6 +110,45 @@ final class MediaTests: XCTestCase {
         XCTAssertNil(HTTPContentRange.totalLength("bytes 0-1/*"))
     }
 
+    func testDriveRedirectKeepsAuthorizationOnGoogleHostsOnly() {
+        XCTAssertTrue(DriveAuthorizationRedirect.shouldForwardAuthorization(to: "www.googleapis.com"))
+        XCTAssertTrue(DriveAuthorizationRedirect.shouldForwardAuthorization(to: "doc-0s-docs.googleusercontent.com"))
+        XCTAssertTrue(DriveAuthorizationRedirect.shouldForwardAuthorization(to: "lh3.googleusercontent.com"))
+        XCTAssertTrue(DriveAuthorizationRedirect.shouldForwardAuthorization(to: "photos.ggpht.com"))
+        XCTAssertFalse(DriveAuthorizationRedirect.shouldForwardAuthorization(to: "evil.example.com"))
+        XCTAssertFalse(DriveAuthorizationRedirect.shouldForwardAuthorization(to: "notgoogleapis.com"))
+        XCTAssertFalse(DriveAuthorizationRedirect.shouldForwardAuthorization(to: nil))
+    }
+
+    func testMediaFailureClassificationAndRetryBackoff() {
+        XCTAssertEqual(MediaFailure.kind(CancellationError()), .cancelled)
+        XCTAssertEqual(MediaFailure.kind(URLError(.cancelled)), .cancelled)
+        XCTAssertEqual(MediaFailure.kind(DriveAPIError.cancelled), .cancelled)
+        XCTAssertTrue(MediaFailure.isCancellation(DriveAPIError.cancelled))
+
+        XCTAssertEqual(MediaFailure.kind(DriveAPIError.unauthorized), .retryable)
+        XCTAssertEqual(MediaFailure.kind(DriveAPIError.rateLimited(retryAfter: 2)), .retryable)
+        XCTAssertEqual(MediaFailure.kind(DriveAPIError.server(status: 503, message: "unavailable")), .retryable)
+        XCTAssertEqual(MediaFailure.kind(DriveAPIError.offline), .retryable)
+        XCTAssertEqual(MediaFailure.kind(DriveAPIError.transport("connection reset")), .retryable)
+        XCTAssertEqual(MediaFailure.kind(URLError(.timedOut)), .retryable)
+
+        XCTAssertEqual(MediaFailure.kind(DriveAPIError.forbidden("no")), .failed)
+        XCTAssertEqual(MediaFailure.kind(DriveAPIError.notFound), .failed)
+        XCTAssertEqual(MediaFailure.detail(DriveAPIError.transport("connection reset")), "connection reset")
+        XCTAssertEqual(MediaFailure.retryAfter(DriveAPIError.rateLimited(retryAfter: 3)), 3)
+
+        XCTAssertTrue(MediaRetry.shouldRetry(DriveAPIError.offline, attempt: 0))
+        XCTAssertTrue(MediaRetry.shouldRetry(DriveAPIError.server(status: 500, message: ""), attempt: 2))
+        XCTAssertFalse(MediaRetry.shouldRetry(DriveAPIError.offline, attempt: 3))
+        XCTAssertFalse(MediaRetry.shouldRetry(DriveAPIError.forbidden("no"), attempt: 0))
+        XCTAssertFalse(MediaRetry.shouldRetry(CancellationError(), attempt: 0))
+        XCTAssertEqual(MediaRetry.delayNanoseconds(attempt: 0, retryAfter: nil), 500_000_000)
+        XCTAssertEqual(MediaRetry.delayNanoseconds(attempt: 1, retryAfter: nil), 1_000_000_000)
+        XCTAssertEqual(MediaRetry.delayNanoseconds(attempt: 0, retryAfter: 2), 2_000_000_000)
+        XCTAssertEqual(MediaRetry.delayNanoseconds(attempt: 10, retryAfter: nil), 8_000_000_000)
+    }
+
     func testMediaURLRequestsFileBytes() throws {
         let client = makeClient(http: MockHTTPClient())
         let url = try client.mediaURL(fileID: "abc")

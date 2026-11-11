@@ -174,6 +174,91 @@ public enum DriveThumbnailURL {
     }
 }
 
+public enum DriveAuthorizationRedirect {
+    /// URLSession drops `Authorization` when a redirect changes host. Drive's `alt=media`
+    /// downloads often redirect to `*.googleusercontent.com`, which then fails closed.
+    public static func shouldForwardAuthorization(to host: String?) -> Bool {
+        guard let host = host?.lowercased(), !host.isEmpty else { return false }
+        let allowed = ["googleapis.com", "googleusercontent.com", "google.com", "ggpht.com"]
+        return allowed.contains { host == $0 || host.hasSuffix(".\($0)") }
+    }
+}
+
+public enum MediaFailureKind: Equatable, Sendable {
+    case cancelled
+    case retryable
+    case failed
+}
+
+public enum MediaFailure {
+    public static func isCancellation(_ error: Error) -> Bool {
+        if error is CancellationError { return true }
+        if let urlError = error as? URLError, urlError.code == .cancelled { return true }
+        if let drive = error as? DriveAPIError, case .cancelled = drive { return true }
+        return false
+    }
+
+    public static func kind(_ error: Error) -> MediaFailureKind {
+        if isCancellation(error) { return .cancelled }
+        if let drive = error as? DriveAPIError {
+            switch drive {
+            case .cancelled:
+                return .cancelled
+            case .rateLimited, .server, .offline, .transport, .unauthorized:
+                return .retryable
+            case .forbidden, .notFound, .gone, .badStatus, .decoding, .missingUploadLocation:
+                return .failed
+            }
+        }
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            case .cancelled:
+                return .cancelled
+            case .timedOut, .networkConnectionLost, .notConnectedToInternet, .cannotConnectToHost,
+                 .cannotFindHost, .dnsLookupFailed, .internationalRoamingOff, .dataNotAllowed:
+                return .retryable
+            default:
+                return .failed
+            }
+        }
+        return .failed
+    }
+
+    public static func detail(_ error: Error) -> String {
+        if let drive = error as? DriveAPIError, let text = drive.errorDescription, !text.isEmpty {
+            return text
+        }
+        if let localized = error as? LocalizedError, let text = localized.errorDescription, !text.isEmpty {
+            return text
+        }
+        return error.localizedDescription
+    }
+
+    public static func retryAfter(_ error: Error) -> TimeInterval? {
+        if let drive = error as? DriveAPIError, case .rateLimited(let retryAfter) = drive {
+            return retryAfter
+        }
+        return nil
+    }
+}
+
+public enum MediaRetry {
+    public static let maxAttempts = 4
+
+    public static func shouldRetry(_ error: Error, attempt: Int, maxAttempts: Int = MediaRetry.maxAttempts) -> Bool {
+        guard attempt >= 0, attempt + 1 < maxAttempts else { return false }
+        return MediaFailure.kind(error) == .retryable
+    }
+
+    /// Exponential backoff starting at half a second, capped at 8 seconds, honoring Retry-After.
+    public static func delayNanoseconds(attempt: Int, retryAfter: TimeInterval?) -> UInt64 {
+        let shift = min(max(attempt, 0), 4)
+        let exponential = UInt64(500_000_000) << shift
+        let hinted = retryAfter.map { UInt64(max(0, $0) * 1_000_000_000) } ?? 0
+        return min(max(exponential, hinted), 8_000_000_000)
+    }
+}
+
 public enum HTTPContentRange {
     /// Total length from a `Content-Range` value such as `bytes 0-99/1234`.
     public static func totalLength(_ header: String) -> Int64? {

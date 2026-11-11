@@ -6,7 +6,8 @@ import FoundationNetworking
 public final class URLSessionHTTPClient: NSObject, HTTPClient, URLSessionDataDelegate, @unchecked Sendable {
     private let session: URLSession
     private let lock = NSLock()
-    private var downloads: [Int: DownloadState] = [:]
+    /// Keyed by task identity. `taskIdentifier` is only unique inside one session, and each download opens its own session.
+    private var downloads: [ObjectIdentifier: DownloadState] = [:]
 
     public init(session: URLSession? = nil) {
         if let session {
@@ -58,13 +59,30 @@ public final class URLSessionHTTPClient: NSObject, HTTPClient, URLSessionDataDel
                 let task = downloadSession.dataTask(with: request.urlRequest())
                 state.task = task
                 lock.lock()
-                downloads[task.taskIdentifier] = state
+                downloads[ObjectIdentifier(task)] = state
                 lock.unlock()
                 task.resume()
             }
         } onCancel: {
             state.task?.cancel()
         }
+    }
+
+    public func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        var redirected = request
+        let alreadySet = redirected.value(forHTTPHeaderField: "Authorization") != nil
+        if !alreadySet,
+           let authorization = task.originalRequest?.value(forHTTPHeaderField: "Authorization"),
+           DriveAuthorizationRedirect.shouldForwardAuthorization(to: redirected.url?.host) {
+            redirected.setValue(authorization, forHTTPHeaderField: "Authorization")
+        }
+        completionHandler(redirected)
     }
 
     public func urlSession(
@@ -132,13 +150,13 @@ public final class URLSessionHTTPClient: NSObject, HTTPClient, URLSessionDataDel
     private func state(for task: URLSessionTask) -> DownloadState? {
         lock.lock()
         defer { lock.unlock() }
-        return downloads[task.taskIdentifier]
+        return downloads[ObjectIdentifier(task)]
     }
 
     private func takeState(for task: URLSessionTask) -> DownloadState? {
         lock.lock()
         defer { lock.unlock() }
-        return downloads.removeValue(forKey: task.taskIdentifier)
+        return downloads.removeValue(forKey: ObjectIdentifier(task))
     }
 
     private static func headers(from response: HTTPURLResponse) -> [String: String] {

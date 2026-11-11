@@ -363,7 +363,15 @@ public struct DriveClient: Sendable {
         onProgress: @escaping @Sendable (Int64, Int64?) -> Void
     ) async throws -> HTTPResponse {
         let token = try await auth.accessToken(forceRefresh: forceRefresh)
-        let request = HTTPRequest(method: "GET", url: url, headers: bearer(token), timeout: 60 * 60)
+        let request = HTTPRequest(
+            method: "GET",
+            url: url,
+            headers: [
+                "Authorization": "Bearer \(token)",
+                "Accept": "*/*"
+            ],
+            timeout: 60 * 60
+        )
         do {
             return try await http.download(request, to: destination, onProgress: onProgress)
         } catch is CancellationError {
