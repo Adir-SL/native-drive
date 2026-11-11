@@ -44,9 +44,37 @@ The Drive API, OAuth, cache, and account model live in the `NativeDriveCore` Swi
 swift test
 ```
 
-## Setup
+## Set up Google sign-in
 
-The Desktop client ID ships in `Config.xcconfig`. Put only the client secret in gitignored `Config.local.xcconfig`, then rebuild. Steps: [docs/GOOGLE_SETUP.md](docs/GOOGLE_SETUP.md).
+The app cannot sign in until this is done. You do it once per checkout, not on every sign-in. After the secret is baked into a build, each person just chooses **Sign in with Google**. The full walkthrough is in [docs/GOOGLE_SETUP.md](docs/GOOGLE_SETUP.md).
+
+The Desktop client ID already ships in `Config.xcconfig`. The client secret must never be committed.
+
+1. Create a Google Cloud project and enable the Google Drive API.
+2. Configure the OAuth consent screen. Choose an **External** audience, add your Google account under **Test users**, and add the Drive scope `https://www.googleapis.com/auth/drive`. The "unverified app" warning is expected while the app is in testing.
+3. Create an OAuth client of type **Desktop app** and copy the Client ID and Client secret.
+4. In the repo, create the gitignored local config and set the secret. Set `GOOGLE_CLIENT_ID` only if you are using your own client instead of the one shipped in `Config.xcconfig`.
+
+   ```bash
+   cp Config.example.xcconfig Config.local.xcconfig
+   ```
+
+   ```text
+   GOOGLE_CLIENT_SECRET=your-client-secret
+   # GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+   ```
+
+5. Rebuild. The values are baked in at build time.
+
+   ```bash
+   xcodegen
+   ```
+
+   Then build and run `NativeDrive.xcodeproj` in Xcode.
+
+6. In the app, choose **Sign in with Google** or **Add Account**.
+
+While the OAuth app is unverified, every additional Google account you add must also be listed as a test user.
 
 ## Contributing
 
