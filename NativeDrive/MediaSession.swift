@@ -212,7 +212,7 @@ final class MediaSession: ObservableObject {
             do {
                 try await client.downloadAuthenticated(from: remote, to: destination) { _, _ in }
             } catch {
-                var request = URLRequest(url: remote)
+                let request = URLRequest(url: remote)
                 let (data, response) = try await URLSession.shared.data(for: request)
                 guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { return }
                 try data.write(to: destination, options: .atomic)
@@ -227,7 +227,7 @@ final class MediaSession: ObservableObject {
     private func downloadFullImage(_ file: DriveFile, generation: Int) async {
         let destination = fileURL(for: file)
         do {
-            try await ensureDownloaded(file, reveal: false)
+            _ = try await ensureDownloaded(file, reveal: false)
             guard generation == self.generation else { return }
             await applyFullImage(at: destination, file: file, generation: generation)
             evictUnneededMedia()
@@ -279,7 +279,7 @@ final class MediaSession: ObservableObject {
             guard !isComplete(file, at: destination) else { continue }
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                try? await self.ensureDownloaded(file, reveal: false)
+                _ = try? await self.ensureDownloaded(file, reveal: false)
             }
         }
     }
@@ -361,12 +361,7 @@ final class MediaSession: ObservableObject {
     }
 
     private func toggleFullScreen() {
-        guard let playerView else { return }
-        if playerView.isInFullScreen {
-            playerView.exitFullScreen(nil)
-        } else {
-            playerView.enterFullScreen(nil)
-        }
+        playerView?.window?.toggleFullScreen(nil)
     }
 
     private func ensureDownloaded(_ file: DriveFile, reveal: Bool) async throws -> URL {
