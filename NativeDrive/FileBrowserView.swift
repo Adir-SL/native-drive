@@ -182,10 +182,10 @@ struct FileTypeIcon: View {
 
     private var workspaceIcon: NSImage {
         let ext = URL(fileURLWithPath: file.name).pathExtension
-        if ext.isEmpty {
+        guard !ext.isEmpty, let type = UTType(filenameExtension: ext) else {
             return NSWorkspace.shared.icon(for: .data)
         }
-        return NSWorkspace.shared.icon(forFileType: ext)
+        return NSWorkspace.shared.icon(for: type)
     }
 
     private static func symbol(for mimeType: String) -> String? {

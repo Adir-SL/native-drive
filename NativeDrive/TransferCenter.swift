@@ -31,7 +31,7 @@ final class TransferCenter: ObservableObject {
     @Published private(set) var items: [Item] = []
     @Published var isPresented = false
 
-    private var tasks: [UUID: Task<Void, Error>] = [:]
+    private var cancellers: [UUID: () -> Void] = [:]
     private var active = 0
     private let limit = 3
 
@@ -51,10 +51,11 @@ final class TransferCenter: ObservableObject {
             direction: .download,
             total: file.size,
             reveal: true
-        ) { id in
-            try await client.download(fileID: file.id, to: destination) { [weak self] bytes, total in
-                Task { @MainActor in
-                    self?.update(id, bytes: bytes, total: total ?? file.size)
+        ) { [self] id in
+            let knownSize = file.size
+            try await client.download(fileID: file.id, to: destination) { [self] bytes, total in
+                Task { @MainActor [self] in
+                    self.update(id, bytes: bytes, total: total ?? knownSize)
                 }
             }
         }
@@ -62,28 +63,23 @@ final class TransferCenter: ObservableObject {
 
     @discardableResult
     func upload(fileURL: URL, name: String, mimeType: String, parentID: String, accountID: String, client: DriveClient) async throws -> DriveFile {
-        var uploaded: DriveFile?
         try await run(
             name: name,
             accountID: accountID,
             direction: .upload,
             total: Self.fileSize(fileURL),
             reveal: true
-        ) { id in
-            uploaded = try await client.uploadFile(at: fileURL, name: name, mimeType: mimeType, parentID: parentID) { [weak self] bytes, total in
-                Task { @MainActor in
-                    self?.update(id, bytes: bytes, total: total)
+        ) { [self] id in
+            try await client.uploadFile(at: fileURL, name: name, mimeType: mimeType, parentID: parentID) { [self] bytes, total in
+                Task { @MainActor [self] in
+                    self.update(id, bytes: bytes, total: total)
                 }
             }
         }
-        guard let uploaded else {
-            throw DriveAPIError.transport("The upload finished without a file.")
-        }
-        return uploaded
     }
 
     func cancel(_ id: UUID) {
-        tasks[id]?.cancel()
+        cancellers[id]?()
         setPhase(id, .cancelled)
     }
 
@@ -96,18 +92,19 @@ final class TransferCenter: ObservableObject {
         }
     }
 
-    private func run(
+    @discardableResult
+    private func run<Result: Sendable>(
         name: String,
         accountID: String,
         direction: Item.Direction,
         total: Int64?,
         reveal: Bool,
-        body: @escaping @MainActor (UUID) async throws -> Void
-    ) async throws {
+        body: @escaping @MainActor (UUID) async throws -> Result
+    ) async throws -> Result {
         let id = UUID()
         items.insert(Item(id: id, accountID: accountID, name: name, direction: direction, completedBytes: 0, totalBytes: total, phase: .queued), at: 0)
         if reveal { isPresented = true }
-        let task = Task { @MainActor in
+        let task = Task { @MainActor () -> Result in
             guard await self.acquire() else {
                 self.setPhase(id, .cancelled)
                 throw DriveAPIError.cancelled
@@ -118,13 +115,14 @@ final class TransferCenter: ObservableObject {
                 throw DriveAPIError.cancelled
             }
             self.setPhase(id, .running)
-            try await body(id)
+            let value = try await body(id)
             self.setPhase(id, .completed)
+            return value
         }
-        tasks[id] = task
-        defer { tasks[id] = nil }
+        cancellers[id] = { task.cancel() }
+        defer { cancellers[id] = nil }
         do {
-            try await task.value
+            return try await task.value
         } catch {
             if items.first(where: { $0.id == id })?.phase != .cancelled {
                 let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription

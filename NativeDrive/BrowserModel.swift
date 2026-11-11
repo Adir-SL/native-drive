@@ -48,7 +48,7 @@ final class BrowserModel: ObservableObject {
     var canGoForward: Bool { navigation.canGoForward }
 
     var title: String {
-        if let activeSearch { return "Search" }
+        if activeSearch != nil { return "Search" }
         if let folder = path.folders.last { return folder.name }
         return path.root.title
     }
@@ -141,7 +141,7 @@ final class BrowserModel: ObservableObject {
         panel.message = "Choose where to save the selected files."
         panel.begin { [weak self] response in
             guard response == .OK, let directory = panel.url else { return }
-            Task { @MainActor in
+            Task { @MainActor [weak self] in
                 guard let self else { return }
                 for file in chosen {
                     await self.download(file, to: directory.appendingPathComponent(FileName.sanitize(file.name)), reveal: true)
@@ -332,7 +332,7 @@ final class BrowserModel: ObservableObject {
         let type = UTType(filenameExtension: ext)?.identifier ?? UTType.data.identifier
         provider.registerFileRepresentation(forTypeIdentifier: type, visibility: .all) { [weak self] completion in
             let progress = Progress(totalUnitCount: max(file.size ?? 1, 1))
-            Task { @MainActor in
+            Task { @MainActor [weak self] in
                 guard let self else {
                     completion(nil, false, DriveAPIError.cancelled)
                     return
@@ -534,7 +534,7 @@ final class BrowserModel: ObservableObject {
         panel.canCreateDirectories = true
         panel.begin { [weak self] response in
             guard response == .OK, let url = panel.url else { return }
-            Task { @MainActor in
+            Task { @MainActor [weak self] in
                 await self?.download(file, to: url, reveal: true)
             }
         }

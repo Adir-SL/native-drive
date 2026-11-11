@@ -59,7 +59,7 @@ public actor RefreshingTokenProvider: AccessTokenProviding {
         config: OAuthClientConfig,
         store: any TokenStore,
         http: any HTTPClient,
-        now: @escaping @Sendable () -> Date = Date.init
+        now: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.accountID = accountID
         self.config = config

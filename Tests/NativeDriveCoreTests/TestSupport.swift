@@ -57,23 +57,18 @@ extension MockHTTPClient.Step {
     }
 }
 
-final class ScriptedTokens: AccessTokenProviding, @unchecked Sendable {
-    private let lock = NSLock()
+actor ScriptedTokens: AccessTokenProviding {
     private var calls: [Bool] = []
     var stale = "stale-token"
     var refreshed = "fresh-token"
 
     func accessToken(forceRefresh: Bool) async throws -> String {
-        lock.lock()
         calls.append(forceRefresh)
-        lock.unlock()
         return forceRefresh ? refreshed : stale
     }
 
     func recordedCalls() -> [Bool] {
-        lock.lock()
-        defer { lock.unlock() }
-        return calls
+        calls
     }
 }
 

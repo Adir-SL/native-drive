@@ -50,11 +50,11 @@ final class OAuthCoordinator: NSObject, ASWebAuthenticationPresentationContextPr
         let gate = CallbackGate()
 
         return try await withTaskCancellationHandler {
-            let serverTask = Task {
+            let serverTask = Task { @MainActor in
                 do {
                     let callback = try await server.waitForCallback()
                     await gate.succeed(callback)
-                    await MainActor.run { self.session?.cancel() }
+                    self.session?.cancel()
                 } catch {
                     await gate.fail(error)
                 }
@@ -88,34 +88,54 @@ final class OAuthCoordinator: NSObject, ASWebAuthenticationPresentationContextPr
     }
 
     private func webAuth(url: URL, scheme: String) async throws -> URL {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<URL, Error>) in
-            var resumed = false
+        let box = AuthCallbackBox()
+        return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<URL, Error>) in
             let session = ASWebAuthenticationSession(url: url, callbackURLScheme: scheme) { callback, error in
-                guard !resumed else { return }
-                resumed = true
-                if let callback {
-                    continuation.resume(returning: callback)
-                    return
-                }
-                let nsError = error as NSError?
-                if nsError?.domain == ASWebAuthenticationSessionErrorDomain,
-                   nsError?.code == ASWebAuthenticationSessionError.canceledLogin.rawValue {
-                    continuation.resume(throwing: OAuthFlowError.cancelled)
-                } else if let error {
-                    continuation.resume(throwing: error)
-                } else {
-                    continuation.resume(throwing: OAuthFlowError.cancelled)
+                box.resume(continuation, with: Self.authResult(callback: callback, error: error))
+            }
+            MainActor.assumeIsolated {
+                session.presentationContextProvider = self
+                session.prefersEphemeralWebBrowserSession = false
+                self.session = session
+                NSApp.activate()
+                if !session.start() {
+                    box.resume(continuation, with: .failure(OAuthFlowError.presentationFailed))
                 }
             }
-            session.presentationContextProvider = self
-            session.prefersEphemeralWebBrowserSession = false
-            self.session = session
-            NSApp.activate()
-            if !session.start() {
-                guard !resumed else { return }
-                resumed = true
-                continuation.resume(throwing: OAuthFlowError.presentationFailed)
-            }
+        }
+    }
+
+    private nonisolated static func authResult(callback: URL?, error: Error?) -> Result<URL, Error> {
+        if let callback {
+            return .success(callback)
+        }
+        let nsError = error as NSError?
+        if nsError?.domain == ASWebAuthenticationSessionErrorDomain,
+           nsError?.code == ASWebAuthenticationSessionError.canceledLogin.rawValue {
+            return .failure(OAuthFlowError.cancelled)
+        }
+        if let error {
+            return .failure(error)
+        }
+        return .failure(OAuthFlowError.cancelled)
+    }
+}
+
+private final class AuthCallbackBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var resumed = false
+
+    func resume(_ continuation: CheckedContinuation<URL, Error>, with result: Result<URL, Error>) {
+        lock.lock()
+        let shouldResume = !resumed
+        resumed = true
+        lock.unlock()
+        guard shouldResume else { return }
+        switch result {
+        case .success(let url):
+            continuation.resume(returning: url)
+        case .failure(let error):
+            continuation.resume(throwing: error)
         }
     }
 }
@@ -144,15 +164,15 @@ private actor CallbackGate {
     }
 
     func wait() async throws -> URL {
-        if let value { return value }
-        if let failure { throw failure }
-        return try await withCheckedThrowingContinuation { continuation in
-            if let value {
-                continuation.resume(returning: value)
-            } else if let failure {
-                continuation.resume(throwing: failure)
-            } else {
-                waiters.append(continuation)
+        try await withCheckedThrowingContinuation { continuation in
+            self.assumeIsolated { gate in
+                if let value = gate.value {
+                    continuation.resume(returning: value)
+                } else if let failure = gate.failure {
+                    continuation.resume(throwing: failure)
+                } else {
+                    gate.waiters.append(continuation)
+                }
             }
         }
     }

@@ -85,26 +85,7 @@ public struct DriveClient: Sendable {
 
     public func listFiles(location: DriveLocation, pageToken: String?) async throws -> FilePage {
         let query = DriveQueryBuilder.filesList(for: location, pageToken: pageToken)
-        var items = [
-            URLQueryItem(name: "pageSize", value: String(query.pageSize)),
-            URLQueryItem(name: "fields", value: DriveFields.fileList),
-            URLQueryItem(name: "supportsAllDrives", value: "true"),
-            URLQueryItem(name: "includeItemsFromAllDrives", value: query.includeItemsFromAllDrives ? "true" : "false"),
-            URLQueryItem(name: "spaces", value: "drive"),
-            URLQueryItem(name: "orderBy", value: query.orderBy)
-        ]
-        if let q = query.q {
-            items.append(URLQueryItem(name: "q", value: q))
-        }
-        if let pageToken = query.pageToken {
-            items.append(URLQueryItem(name: "pageToken", value: pageToken))
-        }
-        if let corpora = query.corpora {
-            items.append(URLQueryItem(name: "corpora", value: corpora))
-        }
-        if let driveId = query.driveId {
-            items.append(URLQueryItem(name: "driveId", value: driveId))
-        }
+        let items = Self.fileListQueryItems(query)
         let response = try await perform { token in
             HTTPRequest(method: "GET", url: try self.endpoint("/drive/v3/files", query: items), headers: self.bearer(token))
         }
@@ -149,13 +130,7 @@ public struct DriveClient: Sendable {
         var drives: [SharedDrive] = []
         var pageToken: String?
         for _ in 0..<20 {
-            var items = [
-                URLQueryItem(name: "pageSize", value: "100"),
-                URLQueryItem(name: "fields", value: "drives(id,name),nextPageToken")
-            ]
-            if let pageToken {
-                items.append(URLQueryItem(name: "pageToken", value: pageToken))
-            }
+            let items = Self.driveListQueryItems(pageToken: pageToken)
             let response = try await perform { token in
                 HTTPRequest(method: "GET", url: try self.endpoint("/drive/v3/drives", query: items), headers: self.bearer(token))
             }
@@ -343,10 +318,11 @@ public struct DriveClient: Sendable {
                 throw DriveAPIError.transport("The file ended before the upload finished.")
             }
             let end = offset + Int64(chunk.count) - 1
+            let chunkStart = offset
             let response = try await sendAllowing([200, 201, 308]) { token in
                 var headers = self.bearer(token)
                 headers["Content-Type"] = mimeType
-                headers["Content-Range"] = "bytes \(offset)-\(end)/\(size)"
+                headers["Content-Range"] = "bytes \(chunkStart)-\(end)/\(size)"
                 return HTTPRequest(method: "PUT", url: sessionURL, headers: headers, body: chunk, timeout: 60 * 30)
             }
             if (200..<300).contains(response.status) {
@@ -486,6 +462,41 @@ public struct DriveClient: Sendable {
             throw DriveAPIError.transport("Invalid API URL.")
         }
         return url
+    }
+
+    private static func fileListQueryItems(_ query: FilesListQuery) -> [URLQueryItem] {
+        var items = [
+            URLQueryItem(name: "pageSize", value: String(query.pageSize)),
+            URLQueryItem(name: "fields", value: DriveFields.fileList),
+            URLQueryItem(name: "supportsAllDrives", value: "true"),
+            URLQueryItem(name: "includeItemsFromAllDrives", value: query.includeItemsFromAllDrives ? "true" : "false"),
+            URLQueryItem(name: "spaces", value: "drive"),
+            URLQueryItem(name: "orderBy", value: query.orderBy)
+        ]
+        if let q = query.q {
+            items.append(URLQueryItem(name: "q", value: q))
+        }
+        if let pageToken = query.pageToken {
+            items.append(URLQueryItem(name: "pageToken", value: pageToken))
+        }
+        if let corpora = query.corpora {
+            items.append(URLQueryItem(name: "corpora", value: corpora))
+        }
+        if let driveId = query.driveId {
+            items.append(URLQueryItem(name: "driveId", value: driveId))
+        }
+        return items
+    }
+
+    private static func driveListQueryItems(pageToken: String?) -> [URLQueryItem] {
+        var items = [
+            URLQueryItem(name: "pageSize", value: "100"),
+            URLQueryItem(name: "fields", value: "drives(id,name),nextPageToken")
+        ]
+        if let pageToken {
+            items.append(URLQueryItem(name: "pageToken", value: pageToken))
+        }
+        return items
     }
 
     private func bearer(_ token: String) -> [String: String] {

@@ -46,7 +46,7 @@ public final class URLSessionHTTPClient: NSObject, HTTPClient, URLSessionDataDel
     ) async throws -> HTTPResponse {
         let directory = destination.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        FileManager.default.createFile(atPath: destination.path, contents: nil)
+        _ = FileManager.default.createFile(atPath: destination.path, contents: nil)
         let handle = try FileHandle(forWritingTo: destination)
         let state = DownloadState(destination: destination, handle: handle, onProgress: onProgress)
         let downloadSession = URLSession(configuration: session.configuration, delegate: self, delegateQueue: nil)

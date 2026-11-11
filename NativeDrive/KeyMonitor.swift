@@ -1,8 +1,9 @@
 import AppKit
 import SwiftUI
 
+@MainActor
 struct KeyMonitor: NSViewRepresentable {
-    var onEvent: (NSEvent) -> Bool
+    var onEvent: @MainActor (NSEvent) -> Bool
 
     func makeCoordinator() -> Coordinator {
         Coordinator(onEvent: onEvent)
@@ -10,8 +11,14 @@ struct KeyMonitor: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NSView {
         let view = NSView(frame: .zero)
-        context.coordinator.monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            context.coordinator.onEvent(event) ? nil : event
+        let coordinator = context.coordinator
+        coordinator.monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            // Local monitors are delivered on the main thread. assumeIsolated keeps
+            // the consume/pass decision synchronous so the key is not also typed.
+            let handled = MainActor.assumeIsolated {
+                coordinator.onEvent(event)
+            }
+            return handled ? nil : event
         }
         return view
     }
@@ -26,15 +33,18 @@ struct KeyMonitor: NSViewRepresentable {
         }
     }
 
+    @MainActor
     final class Coordinator {
-        var onEvent: (NSEvent) -> Bool
+        var onEvent: @MainActor (NSEvent) -> Bool
         var monitor: Any?
-        init(onEvent: @escaping (NSEvent) -> Bool) {
+
+        init(onEvent: @escaping @MainActor (NSEvent) -> Bool) {
             self.onEvent = onEvent
         }
     }
 }
 
+@MainActor
 enum KeyRouting {
     static func handle(_ event: NSEvent, browser: BrowserModel?) -> Bool {
         guard let browser else { return false }
