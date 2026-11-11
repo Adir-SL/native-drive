@@ -11,20 +11,29 @@ struct DecodedStill: @unchecked Sendable {
 enum StillImageDecoder {
     nonisolated static func decode(url: URL) -> DecodedStill? {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+        if let image = orientedThumbnail(from: source) ?? CGImageSourceCreateImageAtIndex(source, 0, nil) {
+            return DecodedStill(image: image)
+        }
+        return nil
+    }
+
+    private nonisolated static func orientedThumbnail(from source: CGImageSource) -> CGImage? {
         let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
         let width = (properties?[kCGImagePropertyPixelWidth] as? NSNumber)?.doubleValue ?? 0
         let height = (properties?[kCGImagePropertyPixelHeight] as? NSNumber)?.doubleValue ?? 0
-        let maxPixel = max(width, height, 1)
+        let longest = max(width, height, 1.0)
+        let maxPixel = min(longest, 16_384.0)
         let options: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true,
             kCGImageSourceThumbnailMaxPixelSize: maxPixel,
-            kCGImageSourceShouldCacheImmediately: true,
-            kCGImageSourceShouldAllowFloat: true
+            kCGImageSourceShouldCacheImmediately: true
         ]
-        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
-            return nil
+        if let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) {
+            return image
         }
-        return DecodedStill(image: image)
+        var allowingFloat = options
+        allowingFloat[kCGImageSourceShouldAllowFloat] = true
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, allowingFloat as CFDictionary)
     }
 }

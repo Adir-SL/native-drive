@@ -257,7 +257,6 @@ final class BrowserModel: ObservableObject {
             playlist: items,
             startingFileID: file.id,
             client: client,
-            transfers: transfers,
             accountID: accountID,
             downloadRoot: downloadRoot
         )

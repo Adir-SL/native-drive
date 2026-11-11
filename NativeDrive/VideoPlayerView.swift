@@ -21,14 +21,17 @@ struct VideoPlayerView: View {
                         Image(systemName: "play.slash")
                             .font(.system(size: 42))
                             .foregroundStyle(.white.opacity(0.8))
-                        Text(session.message ?? "Native Drive can't play this file in the app.")
-                            .multilineTextAlignment(.center)
-                            .foregroundStyle(.white)
-                            .frame(maxWidth: 420)
+                        MediaStatusBanner(session: session)
                         Button("Open in default app") {
                             session.openInDefaultApp()
                         }
                         .keyboardShortcut(.defaultAction)
+                    } else if let fraction = session.downloadFraction {
+                        ProgressView(value: fraction)
+                            .frame(width: 220)
+                            .tint(.white)
+                        Text("Downloading \(session.fileName)")
+                            .foregroundStyle(.white.opacity(0.85))
                     } else {
                         ProgressView()
                             .controlSize(.large)

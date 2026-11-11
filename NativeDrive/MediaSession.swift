@@ -15,12 +15,10 @@ final class MediaSession: ObservableObject {
     let kind: Kind
     let playlistKind: MediaKind
     private let client: DriveClient
-    private let transfers: TransferCenter
     private let accountID: String
     private let downloadRoot: URL
     private var playlist: [DriveFile]
     private var generation = 0
-    private var loader: DriveMediaLoader?
     private var statusObserver: NSKeyValueObservation?
     private var failureObserver: NSObjectProtocol?
 
@@ -28,9 +26,14 @@ final class MediaSession: ObservableObject {
     @Published private(set) var thumbnail: NSImage?
     @Published private(set) var fullImage: NSImage?
     @Published private(set) var message: String?
+    @Published private(set) var detail: String?
+    @Published private(set) var canRetry = false
+    @Published private(set) var downloadFraction: Double?
     @Published private(set) var player: AVPlayer?
     @Published private(set) var playbackFailed = false
     weak var playerView: AVPlayerView?
+    private var downloads: [String: Task<URL, Error>] = [:]
+    private var shouldAutoplay = true
 
     var onDismiss: (@MainActor () -> Void)?
 
@@ -40,7 +43,6 @@ final class MediaSession: ObservableObject {
         playlist: [DriveFile],
         startingFileID: String,
         client: DriveClient,
-        transfers: TransferCenter,
         accountID: String,
         downloadRoot: URL
     ) {
@@ -48,7 +50,6 @@ final class MediaSession: ObservableObject {
         self.playlistKind = playlistKind
         self.playlist = playlist.isEmpty ? [] : playlist
         self.client = client
-        self.transfers = transfers
         self.accountID = accountID
         self.downloadRoot = downloadRoot
         self.index = playlist.firstIndex { $0.id == startingFileID } ?? 0
@@ -82,18 +83,28 @@ final class MediaSession: ObservableObject {
         generation += 1
         player?.pause()
         player = nil
-        statusObserver?.invalidate()
-        statusObserver = nil
-        if let failureObserver {
-            NotificationCenter.default.removeObserver(failureObserver)
-            self.failureObserver = nil
-        }
-        loader = nil
+        detachPlaybackObservers()
     }
 
     func dismiss() {
         stop()
         onDismiss?()
+    }
+
+    func retry() {
+        message = nil
+        detail = nil
+        canRetry = false
+        playbackFailed = false
+        switch kind {
+        case .images:
+            showCurrentImage()
+        case .player:
+            shouldAutoplay = true
+            Task { await self.startPlayer() }
+        case .unsupported:
+            break
+        }
     }
 
     func step(_ delta: Int) {
@@ -164,14 +175,16 @@ final class MediaSession: ObservableObject {
         Task { [weak self] in
             guard let self else { return }
             do {
-                let url = try await self.ensureDownloaded(file, reveal: true)
+                let url = try await self.ensureDownloaded(file)
                 NSWorkspace.shared.open(url)
-            } catch is CancellationError {
-                return
-            } catch let error as DriveAPIError where error == .cancelled {
-                return
             } catch {
-                self.message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                guard !MediaFailure.isCancellation(error) else { return }
+                self.message = "Couldn't download this file."
+                self.detail = MediaFailure.detail(error)
+                self.canRetry = true
+                if self.player == nil {
+                    self.playbackFailed = true
+                }
             }
         }
     }
@@ -182,6 +195,9 @@ final class MediaSession: ObservableObject {
         let file = current
         fullImage = nil
         message = nil
+        detail = nil
+        canRetry = false
+        downloadFraction = nil
         thumbnail = cachedThumbnail(for: file)
         let destination = fileURL(for: file)
         if isComplete(file, at: destination) {
@@ -227,19 +243,16 @@ final class MediaSession: ObservableObject {
     private func downloadFullImage(_ file: DriveFile, generation: Int) async {
         let destination = fileURL(for: file)
         do {
-            _ = try await ensureDownloaded(file, reveal: false)
+            _ = try await ensureDownloaded(file)
             guard generation == self.generation else { return }
             await applyFullImage(at: destination, file: file, generation: generation)
             evictUnneededMedia()
-        } catch is CancellationError {
-            return
-        } catch let error as DriveAPIError where error == .cancelled {
-            return
         } catch {
             guard generation == self.generation else { return }
-            if fullImage == nil && thumbnail == nil {
-                message = "Couldn't download this image."
-            }
+            guard !MediaFailure.isCancellation(error) else { return }
+            message = "Couldn't download this image."
+            detail = MediaFailure.detail(error)
+            canRetry = true
         }
     }
 
@@ -249,6 +262,8 @@ final class MediaSession: ObservableObject {
             guard generation == self.generation else { return }
             fullImage = image
             message = nil
+            detail = nil
+            canRetry = false
             return
         }
         let decoded = await Task.detached(priority: .userInitiated) {
@@ -259,16 +274,22 @@ final class MediaSession: ObservableObject {
             let cgImage = decoded.image
             fullImage = NSImage(cgImage: cgImage, size: NSSize(width: CGFloat(cgImage.width), height: CGFloat(cgImage.height)))
             message = nil
+            detail = nil
+            canRetry = false
             return
         }
         if let fallback = NSImage(contentsOf: url), fallback.size.width > 0 {
             fullImage = fallback
             message = nil
+            detail = nil
+            canRetry = false
             return
         }
         message = thumbnail == nil
             ? "Couldn't decode this image."
             : "Couldn't decode this image. Showing Google's preview instead."
+        detail = "ImageIO could not read \(file.name)."
+        canRetry = true
     }
 
     private func prefetchNeighbors() {
@@ -279,70 +300,122 @@ final class MediaSession: ObservableObject {
             guard !isComplete(file, at: destination) else { continue }
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                _ = try? await self.ensureDownloaded(file, reveal: false)
+                _ = try? await self.ensureDownloaded(file)
             }
         }
     }
 
     private func startPlayer() async {
+        generation += 1
+        let token = generation
         let file = current
         playbackFailed = false
         message = nil
+        detail = nil
+        canRetry = false
+        downloadFraction = 0
+        player?.pause()
+        player = nil
+        detachPlaybackObservers()
+        shouldAutoplay = true
         do {
-            let remote = try client.mediaURL(fileID: file.id)
-            let mediaLoader = DriveMediaLoader(
-                remoteURL: remote,
-                mimeType: file.mimeType,
-                fileName: file.name,
-                totalBytes: file.size,
-                tokenProvider: { [client] forceRefresh in
-                    try await client.accessToken(forceRefresh: forceRefresh)
-                }
-            )
-            guard let playbackURL = mediaLoader.playbackURL(fileID: file.id) else {
-                failPlayback("Couldn't open this file.")
-                return
-            }
-            loader = mediaLoader
-            let asset = AVURLAsset(url: playbackURL)
-            asset.resourceLoader.setDelegate(mediaLoader, queue: mediaLoader.queue)
-            let item = AVPlayerItem(asset: asset)
-            watch(item)
+            let localURL = try await ensureDownloaded(file)
+            guard token == generation else { return }
+            downloadFraction = nil
+            let item = AVPlayerItem(url: localURL)
             let player = AVPlayer(playerItem: item)
+            player.automaticallyWaitsToMinimizeStalling = false
             self.player = player
-            player.play()
+            watch(item)
+            if item.status == .readyToPlay {
+                shouldAutoplay = false
+                player.play()
+            } else if item.status == .failed {
+                noteItemFailure(item)
+            }
         } catch {
-            failPlayback((error as? LocalizedError)?.errorDescription ?? "Couldn't open this file.")
+            guard token == generation else { return }
+            guard !MediaFailure.isCancellation(error) else { return }
+            downloadFraction = nil
+            failPlayback("Couldn't download this file.", detail: MediaFailure.detail(error))
         }
     }
 
     private func watch(_ item: AVPlayerItem) {
-        statusObserver = item.observe(\.status, options: [.new]) { [weak self] item, _ in
-            guard item.status == .failed else { return }
+        detachPlaybackObservers()
+        statusObserver = item.observe(\.status, options: [.initial, .new]) { [weak self] item, _ in
+            let rawStatus = item.status.rawValue
+            let detail = Self.playbackDetail(for: item)
             Task { @MainActor [weak self] in
-                self?.failPlayback("This file can't be played in Native Drive.")
+                self?.handleItemStatus(rawStatus: rawStatus, detail: detail)
             }
         }
         failureObserver = NotificationCenter.default.addObserver(
             forName: .AVPlayerItemFailedToPlayToEndTime,
             object: item,
             queue: .main
-        ) { [weak self] _ in
+        ) { [weak self] notification in
+            let underlying = notification.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error
+            let detail = underlying.map { MediaFailure.detail($0) }
             MainActor.assumeIsolated {
-                self?.failPlayback("Playback stopped before the end of the file.")
+                self?.failPlayback("Playback stopped before the end of the file.", detail: detail)
             }
         }
     }
 
-    private func failPlayback(_ text: String) {
+    private func detachPlaybackObservers() {
+        statusObserver?.invalidate()
+        statusObserver = nil
+        if let failureObserver {
+            NotificationCenter.default.removeObserver(failureObserver)
+            self.failureObserver = nil
+        }
+    }
+
+    private nonisolated static func playbackDetail(for item: AVPlayerItem) -> String? {
+        var lines: [String] = []
+        if let error = item.error {
+            lines.append(MediaFailure.detail(error))
+        }
+        if let events = item.errorLog()?.events.suffix(3) {
+            for event in events {
+                if let comment = event.errorComment, !comment.isEmpty {
+                    lines.append(comment)
+                } else {
+                    lines.append("Error \(event.errorStatusCode)")
+                }
+            }
+        }
+        return lines.isEmpty ? nil : lines.joined(separator: "\n")
+    }
+
+    private func handleItemStatus(rawStatus: Int, detail: String?) {
+        if rawStatus == AVPlayerItem.Status.readyToPlay.rawValue {
+            guard shouldAutoplay, let player else { return }
+            shouldAutoplay = false
+            player.play()
+        } else if rawStatus == AVPlayerItem.Status.failed.rawValue {
+            failPlayback("This file can't be played in Native Drive.", detail: detail)
+        }
+    }
+
+    private func noteItemFailure(_ item: AVPlayerItem) {
+        failPlayback("This file can't be played in Native Drive.", detail: Self.playbackDetail(for: item))
+    }
+
+    private func failPlayback(_ text: String, detail: String? = nil) {
         playbackFailed = true
         message = text
+        self.detail = detail
+        canRetry = true
+        downloadFraction = nil
         player?.pause()
         player = nil
     }
 
     private func togglePlayback() {
         guard let player else { return }
+        shouldAutoplay = false
         if player.timeControlStatus == .playing {
             player.pause()
         } else {
@@ -364,17 +437,68 @@ final class MediaSession: ObservableObject {
         playerView?.window?.toggleFullScreen(nil)
     }
 
-    private func ensureDownloaded(_ file: DriveFile, reveal: Bool) async throws -> URL {
+    private func ensureDownloaded(_ file: DriveFile) async throws -> URL {
         let destination = fileURL(for: file)
         if isComplete(file, at: destination) {
             touch(destination)
             return destination
         }
-        try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try await transfers.download(file: file, accountID: accountID, destination: destination, client: client, reveal: reveal)
-        touch(destination)
+        if let existing = downloads[file.id] {
+            return try await existing.value
+        }
+        let task = Task { @MainActor in
+            try await self.downloadFile(file, to: destination)
+        }
+        downloads[file.id] = task
+        defer { downloads[file.id] = nil }
+        let url = try await task.value
         evictUnneededMedia()
-        return destination
+        return url
+    }
+
+    private func downloadFile(_ file: DriveFile, to destination: URL) async throws {
+        try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let partial = destination.appendingPathExtension("partial")
+        var attempt = 0
+        while true {
+            if FileManager.default.fileExists(atPath: partial.path) {
+                try? FileManager.default.removeItem(at: partial)
+            }
+            do {
+                let knownSize = file.size
+                let fileID = file.id
+                try await client.download(fileID: fileID, to: partial) { [weak self] bytes, total in
+                    let fraction = Self.fraction(bytes: bytes, total: total, known: knownSize)
+                    Task { @MainActor [weak self] in
+                        guard let self, self.fileID == fileID else { return }
+                        self.downloadFraction = fraction
+                    }
+                }
+                guard isComplete(file, at: partial) else {
+                    throw DriveAPIError.transport("The download ended before the whole file arrived.")
+                }
+                if FileManager.default.fileExists(atPath: destination.path) {
+                    try FileManager.default.removeItem(at: destination)
+                }
+                try FileManager.default.moveItem(at: partial, to: destination)
+                touch(destination)
+                return
+            } catch {
+                if MediaFailure.isCancellation(error) || Task.isCancelled {
+                    throw CancellationError()
+                }
+                guard MediaRetry.shouldRetry(error, attempt: attempt) else { throw error }
+                let delay = MediaRetry.delayNanoseconds(attempt: attempt, retryAfter: MediaFailure.retryAfter(error))
+                attempt += 1
+                try await Task.sleep(nanoseconds: delay)
+            }
+        }
+    }
+
+    private static func fraction(bytes: Int64, total: Int64?, known: Int64?) -> Double {
+        let denominator = (total ?? 0) > 0 ? total! : (known ?? 0)
+        guard denominator > 0 else { return 0 }
+        return min(1, Double(bytes) / Double(denominator))
     }
 
     private func cachedThumbnail(for file: DriveFile) -> NSImage? {
@@ -388,7 +512,7 @@ final class MediaSession: ObservableObject {
     }
 
     private func thumbnailURL(for file: DriveFile) -> URL {
-        fileURL(for: file).deletingLastPathComponent().appendingPathComponent("thumbnail")
+        fileURL(for: file).deletingLastPathComponent().appendingPathComponent(".nd-thumbnail")
     }
 
     private func isComplete(_ file: DriveFile, at url: URL) -> Bool {
@@ -418,7 +542,7 @@ final class MediaSession: ObservableObject {
             entries.append(MediaCacheEntry(
                 key: directory.lastPathComponent,
                 byteCount: byteCount(of: directory),
-                lastAccessed: values?.contentModificationDate ?? .distantPast
+                lastAccessed: newestDate(in: directory) ?? values?.contentModificationDate ?? .distantPast
             ))
         }
         let remove = MediaCacheEviction.keysToRemove(entries: entries, protectedKeys: protectedIDs())
@@ -428,14 +552,23 @@ final class MediaSession: ObservableObject {
     }
 
     private func protectedIDs() -> Set<String> {
-        var ids: Set<String> = [current.id]
+        var ids: Set<String> = [AccountID.sanitize(current.id)]
         if let previous = MediaNavigator.neighborIndex(current: index, count: count, delta: -1) {
-            ids.insert(playlist[previous].id)
+            ids.insert(AccountID.sanitize(playlist[previous].id))
         }
         if let next = MediaNavigator.neighborIndex(current: index, count: count, delta: 1) {
-            ids.insert(playlist[next].id)
+            ids.insert(AccountID.sanitize(playlist[next].id))
         }
         return ids
+    }
+
+    private func newestDate(in directory: URL) -> Date? {
+        guard let children = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.contentModificationDateKey]) else {
+            return nil
+        }
+        return children.compactMap { url in
+            try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+        }.max()
     }
 
     private func byteCount(of directory: URL) -> Int64 {

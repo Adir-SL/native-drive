@@ -23,13 +23,8 @@ struct ImageViewer: View {
             VStack(spacing: 0) {
                 header
                 Spacer()
-                if let message = session.message {
-                    Text(message)
-                        .font(.callout)
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 8)
-                        .background(.black.opacity(0.55), in: Capsule())
+                if session.message != nil {
+                    MediaStatusBanner(session: session)
                         .padding(.bottom, 20)
                 }
             }
@@ -65,6 +60,41 @@ struct ImageViewer: View {
         .foregroundStyle(.white)
         .background(.black.opacity(0.45))
         .buttonStyle(.borderless)
+    }
+}
+
+struct MediaStatusBanner: View {
+    @ObservedObject var session: MediaSession
+    @State private var showDetails = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let message = session.message {
+                Text(message)
+                    .font(.callout)
+                    .foregroundStyle(.white)
+            }
+            if let detail = session.detail, !detail.isEmpty {
+                DisclosureGroup(isExpanded: $showDetails) {
+                    Text(detail)
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.85))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } label: {
+                    Text("Details")
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.9))
+                }
+            }
+            if session.canRetry {
+                Button("Retry") { session.retry() }
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: 460, alignment: .leading)
+        .background(.black.opacity(0.72), in: RoundedRectangle(cornerRadius: 10))
+        .padding(.horizontal, 16)
     }
 }
 
