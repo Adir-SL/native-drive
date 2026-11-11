@@ -15,6 +15,7 @@ final class MediaSession: ObservableObject {
     let kind: Kind
     let playlistKind: MediaKind
     private let client: DriveClient
+    private let thumbnails: ThumbnailFetcher
     private let accountID: String
     private let downloadRoot: URL
     private var playlist: [DriveFile]
@@ -34,6 +35,12 @@ final class MediaSession: ObservableObject {
     weak var playerView: AVPlayerView?
     private var downloads: [String: Task<URL, Error>] = [:]
     private var shouldAutoplay = true
+    private var travelDirection = 0
+    private var loadingOriginal = false
+    private var imageScheduler = PrefetchScheduler(limit: 2)
+    private var imageTasks: [String: Task<Void, Never>] = [:]
+    private var imageTokens: [String: UUID] = [:]
+    var allowsPrefetch = true
 
     var onDismiss: (@MainActor () -> Void)?
 
@@ -44,12 +51,14 @@ final class MediaSession: ObservableObject {
         startingFileID: String,
         client: DriveClient,
         accountID: String,
-        downloadRoot: URL
+        downloadRoot: URL,
+        thumbnails: ThumbnailFetcher
     ) {
         self.kind = kind
         self.playlistKind = playlistKind
         self.playlist = playlist.isEmpty ? [] : playlist
         self.client = client
+        self.thumbnails = thumbnails
         self.accountID = accountID
         self.downloadRoot = downloadRoot
         self.index = playlist.firstIndex { $0.id == startingFileID } ?? 0
@@ -109,8 +118,19 @@ final class MediaSession: ObservableObject {
 
     func step(_ delta: Int) {
         guard kind == .images, let next = MediaNavigator.neighborIndex(current: index, count: count, delta: delta) else { return }
+        travelDirection = delta < 0 ? -1 : 1
         index = next
         showCurrentImage()
+    }
+
+    func loadOriginalIfNeeded() {
+        guard kind == .images, !loadingOriginal else { return }
+        loadingOriginal = true
+        let token = generation
+        let file = current
+        Task { @MainActor [weak self] in
+            await self?.downloadFullImage(file, generation: token)
+        }
     }
 
     func replacePlaylist(_ files: [DriveFile]) {
@@ -198,46 +218,34 @@ final class MediaSession: ObservableObject {
         detail = nil
         canRetry = false
         downloadFraction = nil
-        thumbnail = cachedThumbnail(for: file)
+        loadingOriginal = false
+        thumbnail = thumbnails.cached(fileID: file.id, edge: ThumbnailPlan.rowEdge)
+        fullImage = thumbnails.cached(fileID: file.id, edge: ThumbnailPlan.proxyEdge)
         let destination = fileURL(for: file)
         if isComplete(file, at: destination) {
             touch(destination)
             Task { @MainActor [weak self] in
                 await self?.applyFullImage(at: destination, file: file, generation: token)
             }
-        } else {
+        } else if fullImage == nil {
             Task { @MainActor [weak self] in
-                await self?.downloadFullImage(file, generation: token)
+                await self?.loadProxy(file, generation: token)
             }
         }
-        if thumbnail == nil {
-            Task { @MainActor [weak self] in
-                await self?.downloadThumbnail(file, generation: token)
-            }
-        }
-        prefetchNeighbors()
+        prefetchImageNeighbors()
     }
 
-    private func downloadThumbnail(_ file: DriveFile, generation: Int) async {
-        guard let link = file.thumbnailLink else { return }
-        let remoteString = DriveThumbnailURL.enlarged(link)
-        guard let remote = URL(string: remoteString) else { return }
-        let destination = thumbnailURL(for: file)
-        do {
-            try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
-            do {
-                try await client.downloadAuthenticated(from: remote, to: destination) { _, _ in }
-            } catch {
-                let request = URLRequest(url: remote)
-                let (data, response) = try await URLSession.shared.data(for: request)
-                guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { return }
-                try data.write(to: destination, options: .atomic)
-            }
-            guard generation == self.generation, fullImage == nil else { return }
-            thumbnail = NSImage(contentsOf: destination)
-        } catch {
+    private func loadProxy(_ file: DriveFile, generation: Int) async {
+        if let image = await thumbnails.image(for: file, edge: ThumbnailPlan.proxyEdge) {
+            guard generation == self.generation else { return }
+            fullImage = image
+            message = nil
+            detail = nil
+            canRetry = false
             return
         }
+        guard generation == self.generation else { return }
+        await downloadFullImage(file, generation: generation)
     }
 
     private func downloadFullImage(_ file: DriveFile, generation: Int) async {
@@ -292,15 +300,41 @@ final class MediaSession: ObservableObject {
         canRetry = true
     }
 
-    private func prefetchNeighbors() {
-        for delta in [-1, 1] {
-            guard let next = MediaNavigator.neighborIndex(current: index, count: count, delta: delta) else { continue }
-            let file = playlist[next]
-            let destination = fileURL(for: file)
-            guard !isComplete(file, at: destination) else { continue }
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                _ = try? await self.ensureDownloaded(file)
+    private func prefetchImageNeighbors() {
+        let ids = PrefetchPlanner.imageIDs(
+            in: playlist,
+            currentID: fileID,
+            direction: travelDirection,
+            isConstrained: !allowsPrefetch
+        )
+        let jobs = ids.enumerated().map { PrefetchJob(id: $0.element, priority: $0.offset) }
+        let decision = imageScheduler.setRelevant(jobs)
+        for job in decision.cancel {
+            imageTokens[job.id] = UUID()
+            imageTasks[job.id]?.cancel()
+            imageTasks[job.id] = nil
+        }
+        for job in decision.start {
+            startImagePrefetch(job)
+        }
+    }
+
+    private func startImagePrefetch(_ job: PrefetchJob) {
+        guard let file = playlist.first(where: { $0.id == job.id }) else {
+            let more = imageScheduler.finished(job.id)
+            for next in more { startImagePrefetch(next) }
+            return
+        }
+        let token = UUID()
+        imageTokens[job.id] = token
+        imageTasks[job.id] = Task { @MainActor [weak self] in
+            guard let self else { return }
+            _ = await self.thumbnails.image(for: file, edge: ThumbnailPlan.proxyEdge)
+            guard self.imageTokens[job.id] == token else { return }
+            self.imageTasks[job.id] = nil
+            let more = self.imageScheduler.finished(job.id)
+            for next in more {
+                self.startImagePrefetch(next)
             }
         }
     }
@@ -496,18 +530,8 @@ final class MediaSession: ObservableObject {
         }
     }
 
-    private func cachedThumbnail(for file: DriveFile) -> NSImage? {
-        let url = thumbnailURL(for: file)
-        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
-        return NSImage(contentsOf: url)
-    }
-
     private func fileURL(for file: DriveFile) -> URL {
         downloadRoot.appendingPathComponent(MediaCacheKey.relativePath(accountID: accountID, fileID: file.id, fileName: file.name))
-    }
-
-    private func thumbnailURL(for file: DriveFile) -> URL {
-        fileURL(for: file).deletingLastPathComponent().appendingPathComponent(".nd-thumbnail")
     }
 
     private func isComplete(_ file: DriveFile, at url: URL) -> Bool {

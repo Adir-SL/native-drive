@@ -6,21 +6,38 @@ import FoundationNetworking
 public final class URLSessionHTTPClient: NSObject, HTTPClient, URLSessionDataDelegate, @unchecked Sendable {
     private let session: URLSession
     private let lock = NSLock()
-    /// Keyed by task identity. `taskIdentifier` is only unique inside one session, and each download opens its own session.
+    /// One session for file bytes so HTTP/2 connections are reused. `taskIdentifier` is only unique inside a session, so state is keyed by object identity.
+    private var downloadSession: URLSession!
     private var downloads: [ObjectIdentifier: DownloadState] = [:]
 
     public init(session: URLSession? = nil) {
         if let session {
             self.session = session
         } else {
-            let configuration = URLSessionConfiguration.ephemeral
-            configuration.urlCache = nil
-            configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+            let configuration = URLSessionConfiguration.default
+            configuration.httpMaximumConnectionsPerHost = 8
             configuration.timeoutIntervalForRequest = 60
             configuration.timeoutIntervalForResource = 60 * 60
+            #if canImport(FoundationNetworking)
+            configuration.urlCache = URLCache(memoryCapacity: 32 * 1024 * 1024, diskCapacity: 128 * 1024 * 1024, diskPath: nil)
+            #else
+            configuration.urlCache = URLCache(memoryCapacity: 32 * 1024 * 1024, diskCapacity: 128 * 1024 * 1024)
+            #endif
+            configuration.requestCachePolicy = .reloadRevalidatingCacheData
             self.session = URLSession(configuration: configuration)
         }
         super.init()
+        if session != nil {
+            downloadSession = self.session
+        } else {
+            let downloads = URLSessionConfiguration.default
+            downloads.urlCache = nil
+            downloads.requestCachePolicy = .reloadIgnoringLocalCacheData
+            downloads.httpMaximumConnectionsPerHost = 6
+            downloads.timeoutIntervalForRequest = 60
+            downloads.timeoutIntervalForResource = 60 * 60
+            downloadSession = URLSession(configuration: downloads, delegate: self, delegateQueue: nil)
+        }
     }
 
     public func send(_ request: HTTPRequest) async throws -> HTTPResponse {
@@ -50,8 +67,6 @@ public final class URLSessionHTTPClient: NSObject, HTTPClient, URLSessionDataDel
         _ = FileManager.default.createFile(atPath: destination.path, contents: nil)
         let handle = try FileHandle(forWritingTo: destination)
         let state = DownloadState(destination: destination, handle: handle, onProgress: onProgress)
-        let downloadSession = URLSession(configuration: session.configuration, delegate: self, delegateQueue: nil)
-        state.session = downloadSession
 
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<HTTPResponse, Error>) in
@@ -126,7 +141,6 @@ public final class URLSessionHTTPClient: NSObject, HTTPClient, URLSessionDataDel
     public func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         guard let state = takeState(for: task) else { return }
         try? state.handle.close()
-        state.session?.finishTasksAndInvalidate()
         let continuation = state.continuation
         state.continuation = nil
         if let writeError = state.writeError {
@@ -172,7 +186,6 @@ private final class DownloadState: @unchecked Sendable {
     let destination: URL
     let handle: FileHandle
     let onProgress: @Sendable (Int64, Int64?) -> Void
-    var session: URLSession?
     var task: URLSessionTask?
     var continuation: CheckedContinuation<HTTPResponse, Error>?
     var status: Int = -1

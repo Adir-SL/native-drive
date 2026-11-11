@@ -45,6 +45,7 @@ targets:
       - sdk: AVFoundation.framework
       - sdk: AVKit.framework
       - sdk: ImageIO.framework
+      - sdk: Network.framework
     settings:
       base:
         PRODUCT_NAME: NativeDrive

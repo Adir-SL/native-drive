@@ -1,7 +1,7 @@
 import Foundation
 
 public enum DriveFields {
-    public static let file = "id,name,mimeType,modifiedTime,viewedByMeTime,size,starred,trashed,parents,webViewLink,iconLink,thumbnailLink,owners(displayName,emailAddress,me,photoLink,permissionId),md5Checksum,driveId,shortcutDetails(targetId,targetMimeType)"
+    public static let file = "id,name,mimeType,modifiedTime,viewedByMeTime,size,starred,trashed,parents,webViewLink,thumbnailLink,owners(displayName,me),md5Checksum,driveId,shortcutDetails(targetId,targetMimeType)"
     public static let fileList = "files(\(file)),nextPageToken"
     public static let changeList = "changes(fileId,removed,file(\(file))),nextPageToken,newStartPageToken"
 }
@@ -165,7 +165,7 @@ public struct DriveClient: Sendable {
     public func listChanges(pageToken: String) async throws -> ChangePage {
         let items = [
             URLQueryItem(name: "pageToken", value: pageToken),
-            URLQueryItem(name: "pageSize", value: "100"),
+            URLQueryItem(name: "pageSize", value: String(DriveQueryBuilder.maxPageSize)),
             URLQueryItem(name: "includeItemsFromAllDrives", value: "true"),
             URLQueryItem(name: "supportsAllDrives", value: "true"),
             URLQueryItem(name: "includeRemoved", value: "true"),

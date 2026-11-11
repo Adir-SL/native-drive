@@ -9,20 +9,21 @@ struct DecodedStill: @unchecked Sendable {
 }
 
 enum StillImageDecoder {
-    nonisolated static func decode(url: URL) -> DecodedStill? {
+    nonisolated static func decode(url: URL, maxPixel: CGFloat = 16_384) -> DecodedStill? {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
-        if let image = orientedThumbnail(from: source) ?? CGImageSourceCreateImageAtIndex(source, 0, nil) {
+        if let image = orientedThumbnail(from: source, maxPixel: maxPixel) ?? CGImageSourceCreateImageAtIndex(source, 0, nil) {
             return DecodedStill(image: image)
         }
         return nil
     }
 
-    private nonisolated static func orientedThumbnail(from source: CGImageSource) -> CGImage? {
+    private nonisolated static func orientedThumbnail(from source: CGImageSource, maxPixel requested: CGFloat) -> CGImage? {
         let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
         let width = (properties?[kCGImagePropertyPixelWidth] as? NSNumber)?.doubleValue ?? 0
         let height = (properties?[kCGImagePropertyPixelHeight] as? NSNumber)?.doubleValue ?? 0
         let longest = max(width, height, 1.0)
-        let maxPixel = min(longest, 16_384.0)
+        let cap = max(requested, 1)
+        let maxPixel = min(longest, cap)
         let options: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true,

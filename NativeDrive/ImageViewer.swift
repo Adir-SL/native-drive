@@ -10,8 +10,13 @@ struct ImageViewer: View {
             GeometryReader { geometry in
                 ZStack {
                     if let image = session.fullImage ?? session.thumbnail {
-                        ZoomableImage(image: image)
-                            .id(session.fileID)
+                        ZoomableImage(image: image) { level in
+                            if level > 1.01 {
+                                session.loadOriginalIfNeeded()
+                            }
+                        }
+                        .id(session.fileID)
+                        .blur(radius: session.fullImage == nil ? 12 : 0)
                     } else {
                         ProgressView()
                             .controlSize(.large)
@@ -100,6 +105,7 @@ struct MediaStatusBanner: View {
 
 private struct ZoomableImage: View {
     let image: NSImage
+    var onZoomLevel: (CGFloat) -> Void = { _ in }
     @State private var zoom: CGFloat = 1
     @State private var pan: CGSize = .zero
 
@@ -119,6 +125,7 @@ private struct ZoomableImage: View {
                             zoom = 1
                             pan = .zero
                         }
+                        onZoomLevel(zoom)
                     },
                     onPan: { delta in
                         guard zoom > 1 else { return }

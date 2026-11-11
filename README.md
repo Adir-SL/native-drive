@@ -23,7 +23,7 @@ Google Drive for desktop mounts your files in Finder as if they were on your Mac
 - Opens Google Docs, Sheets, and Slides in the browser
 - In-app photos (including HEIC) and video, so images and clips open without leaving the app
 
-Photos and videos open in the app. Images show the Drive thumbnail immediately, then the full file, with zoom, pan, and arrow keys to move through the other pictures in the folder. HEIC and HEIF are decoded on the Mac, including orientation. A failed download is reported separately from a failed decode, with the underlying error and a Retry button. MP4, MOV, M4V, and common audio files download, then play with the system player; formats the system can't play, such as MKV and AVI, offer **Open in default app**. Details: [docs/MEDIA.md](docs/MEDIA.md).
+Photos and videos open in the app. Images show a cached thumbnail immediately, then a screen-sized preview, with zoom, pan, and arrow keys to move through the other pictures in the folder. The original downloads when you zoom in. HEIC and HEIF are decoded on the Mac, including orientation. A failed download is reported separately from a failed decode, with the underlying error and a Retry button. MP4, MOV, M4V, and common audio files download, then play with the system player; formats the system can't play, such as MKV and AVI, offer **Open in default app**. Details: [docs/MEDIA.md](docs/MEDIA.md).
 
 ## Status
 

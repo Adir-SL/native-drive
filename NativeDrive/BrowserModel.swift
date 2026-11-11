@@ -27,13 +27,24 @@ final class BrowserModel: ObservableObject {
     @Published var mediaSession: MediaSession?
 
     private var searchTask: Task<Void, Never>?
+    private var loadTask: Task<Void, Never>?
+    private var hoverTask: Task<Void, Never>?
     private var loadGeneration = 0
-    private var prefetchedKey: String?
     private var isLoadingMore = false
     private var suppressSearch = false
     private var pendingDrop: PendingDrop?
     private var dropTask: Task<Void, Never>?
     private var lastAction: (name: String, at: Date)?
+    private var memory = ListingMemoryCache()
+    private var metadata = FileMetadataIndex()
+    private var folderPrefetch = PrefetchScheduler(limit: 2)
+    private var prefetchTasks: [String: Task<Void, Never>] = [:]
+    private var prefetchTokens: [String: UUID] = [:]
+    private var prefetchLocations: [String: DriveLocation] = [:]
+    private var hoveredFolderID: String?
+    private var seenThisLoad: Set<String>?
+    private let thumbnails: ThumbnailFetcher
+    private let network = NetworkConditions()
 
     init(accountID: String, client: DriveClient, cache: DriveCache, transfers: TransferCenter, downloadRoot: URL) {
         self.accountID = accountID
@@ -41,7 +52,9 @@ final class BrowserModel: ObservableObject {
         self.cache = cache
         self.transfers = transfers
         self.downloadRoot = downloadRoot
+        thumbnails = ThumbnailFetcher(client: client, accountID: accountID, root: downloadRoot)
         navigation = BrowserNavigation(path: BrowsePath(root: .myDrive))
+        network.start()
     }
 
     var path: BrowsePath { navigation.path }
@@ -61,44 +74,73 @@ final class BrowserModel: ObservableObject {
 
     func restore() async {
         sharedDrives = (try? await cache.drives(for: accountID)) ?? []
-        await reload(forceFull: false)
+        if files.isEmpty { isRefreshing = true }
+        await reloadNow(forceFull: false, generation: loadGeneration, location: currentLocation)
         await refreshDrives()
     }
 
     func refresh() {
-        Task { await reload(forceFull: true) }
+        scheduleReload(forceFull: true)
     }
 
     func selectRoot(_ root: DriveRoot) {
         clearSearchSilently()
         navigation.selectRoot(root)
-        Task { await reload(forceFull: false) }
+        scheduleReload(forceFull: false)
     }
 
     func goBack() {
         guard navigation.canGoBack else { return }
         clearSearchSilently()
         navigation.goBack()
-        Task { await reload(forceFull: false) }
+        scheduleReload(forceFull: false)
     }
 
     func goForward() {
         guard navigation.canGoForward else { return }
         clearSearchSilently()
         navigation.goForward()
-        Task { await reload(forceFull: false) }
+        scheduleReload(forceFull: false)
     }
 
     func goUp() {
         guard navigation.goUp() else { return }
         clearSearchSilently()
-        Task { await reload(forceFull: false) }
+        scheduleReload(forceFull: false)
     }
 
     func jumpToCrumb(_ index: Int?) {
         clearSearchSilently()
         navigation.jumpToCrumb(index)
-        Task { await reload(forceFull: false) }
+        scheduleReload(forceFull: false)
+    }
+
+    func hover(_ file: DriveFile, inside: Bool) {
+        hoverTask?.cancel()
+        hoverTask = nil
+        guard inside, file.isFolder else {
+            if hoveredFolderID == file.id {
+                hoveredFolderID = nil
+                refreshDesiredPrefetch()
+            }
+            return
+        }
+        let folder = file
+        hoverTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: PrefetchPlanner.hoverDelayNanoseconds)
+            guard !Task.isCancelled else { return }
+            self?.hoveredFolderID = folder.id
+            self?.refreshDesiredPrefetch()
+        }
+    }
+
+    func prefetchSelection() {
+        refreshDesiredPrefetch()
+    }
+
+    func thumbnail(for file: DriveFile, edge: Int) async -> NSImage? {
+        let resolved = metadata.file(id: file.id) ?? file
+        return await thumbnails.image(for: resolved, edge: edge)
     }
 
     func updateSearchText(_ text: String) {
@@ -258,8 +300,10 @@ final class BrowserModel: ObservableObject {
             startingFileID: file.id,
             client: client,
             accountID: accountID,
-            downloadRoot: downloadRoot
+            downloadRoot: downloadRoot,
+            thumbnails: thumbnails
         )
+        session.allowsPrefetch = !network.isConstrained
         session.onDismiss = { [weak self, weak session] in
             guard let self, let session, self.mediaSession === session else { return }
             self.mediaSession = nil
@@ -420,42 +464,84 @@ final class BrowserModel: ObservableObject {
         Task { await loadMore() }
     }
 
-    private func reload(forceFull: Bool) async {
+    private func scheduleReload(forceFull: Bool) {
+        hoveredFolderID = nil
+        loadTask?.cancel()
         loadGeneration += 1
         let generation = loadGeneration
         let location = currentLocation
-        prefetchedKey = nil
-        if let cached = try? await cache.listing(accountID: accountID, key: location.cacheKey) {
-            guard generation == loadGeneration else { return }
+        seenThisLoad = nil
+        if let cached = memory.listing(for: location.cacheKey) {
             apply(cached)
+        } else {
+            files = []
+            nextPageToken = nil
+            selection = []
+            isRefreshing = true
         }
+        refreshDesiredPrefetch()
+        loadTask = Task { [weak self] in
+            await self?.reloadNow(forceFull: forceFull, generation: generation, location: location)
+        }
+    }
+
+    private func reloadNow(forceFull: Bool, generation: Int, location: DriveLocation) async {
+        if memory.listing(for: location.cacheKey) == nil,
+           let disk = try? await cache.listing(accountID: accountID, key: location.cacheKey) {
+            guard generation == loadGeneration, !Task.isCancelled else { return }
+            memory.store(disk)
+            apply(disk)
+        }
+        let cachedNow = memory.listing(for: location.cacheKey)
+        let fresh = cachedNow.map { !ListingFreshness.isStale($0, now: Date()) } ?? false
+        if !forceFull, fresh {
+            isRefreshing = false
+            if cachedNow?.nextPageToken != nil {
+                await loadRemainingPages(location: location, generation: generation)
+            }
+            guard generation == loadGeneration else { return }
+            refreshDesiredPrefetch()
+            return
+        }
+
         isRefreshing = true
-        defer { if generation == loadGeneration { isRefreshing = false } }
+        defer {
+            if generation == loadGeneration {
+                isRefreshing = false
+                refreshDesiredPrefetch()
+            }
+        }
 
         do {
-            let cachedListing = try await cache.listing(accountID: accountID, key: location.cacheKey)
             let token = try await cache.startPageToken(for: accountID)
             let plan = RevalidatePlanner.plan(
                 forceFull: forceFull,
-                hasCachedListing: cachedListing != nil,
+                hasCachedListing: cachedNow != nil,
                 startToken: token,
                 location: location
             )
             if case .incremental(let start) = plan {
                 do {
                     let collected = try await client.collectChanges(from: start)
-                    guard generation == loadGeneration else { return }
+                    guard generation == loadGeneration, !Task.isCancelled else { return }
                     _ = try await cache.applyChanges(accountID: accountID, changes: collected.changes)
                     try await cache.setStartPageToken(for: accountID, token: collected.nextStartToken)
                     if let updated = try await cache.listing(accountID: accountID, key: location.cacheKey) {
+                        guard generation == loadGeneration else { return }
+                        memory.store(updated)
                         apply(updated)
                     }
                     isOffline = false
-                    await prefetchIfNeeded(generation: generation)
+                    await loadRemainingPages(location: location, generation: generation)
                     return
                 } catch let error as DriveAPIError where error == .gone {
                     try? await cache.clearListings(accountID: accountID)
                     try? await cache.setStartPageToken(for: accountID, token: nil)
+                    memory.removeAll()
+                } catch is CancellationError {
+                    return
+                } catch let error as DriveAPIError where error == .cancelled {
+                    return
                 }
             }
 
@@ -464,14 +550,26 @@ final class BrowserModel: ObservableObject {
                     try? await cache.setStartPageToken(for: accountID, token: start)
                 }
             }
+            guard generation == loadGeneration, !Task.isCancelled else { return }
+            seenThisLoad = []
             let page = try await client.listFiles(location: location, pageToken: nil)
-            guard generation == loadGeneration else { return }
-            let sorted = ListingSorter.sort(page.files, key: location.cacheKey)
-            let listing = CachedListing(key: location.cacheKey, files: sorted, nextPageToken: page.nextPageToken, fetchedAt: Date())
-            try await cache.saveListing(accountID: accountID, listing: listing)
-            apply(listing)
+            guard generation == loadGeneration, !Task.isCancelled else { return }
+            try await storePage(page, location: location, generation: generation, resetSeen: true)
             isOffline = false
-            await prefetchIfNeeded(generation: generation)
+            await loadRemainingPages(location: location, generation: generation)
+            guard generation == loadGeneration else { return }
+            if let seen = seenThisLoad {
+                let closed = ListingRefresh.droppingUnseen(files: files, seen: seen, key: location.cacheKey)
+                let listing = CachedListing(key: location.cacheKey, files: closed, nextPageToken: nil, fetchedAt: Date())
+                memory.store(listing)
+                try? await cache.saveListing(accountID: accountID, listing: listing)
+                apply(listing)
+            }
+            seenThisLoad = nil
+        } catch is CancellationError {
+            return
+        } catch let error as DriveAPIError where error == .cancelled {
+            return
         } catch {
             guard generation == loadGeneration else { return }
             if !files.isEmpty, DriveAPIError.isOffline(error) {
@@ -485,31 +583,31 @@ final class BrowserModel: ObservableObject {
         }
     }
 
-    private func prefetchIfNeeded(generation: Int) async {
-        let key = currentLocation.cacheKey
-        guard prefetchedKey != key else { return }
-        prefetchedKey = key
-        guard nextPageToken != nil else { return }
-        await loadMore(generation: generation)
-    }
-
     private func loadMore() async {
-        await loadMore(generation: loadGeneration)
+        await loadMore(location: currentLocation, generation: loadGeneration)
     }
 
-    private func loadMore(generation: Int) async {
+    private func loadRemainingPages(location: DriveLocation, generation: Int) async {
+        while generation == loadGeneration, nextPageToken != nil, !Task.isCancelled {
+            let before = nextPageToken
+            await loadMore(location: location, generation: generation)
+            if nextPageToken == before { break }
+        }
+    }
+
+    private func loadMore(location: DriveLocation, generation: Int) async {
         guard !isLoadingMore, let token = nextPageToken else { return }
         isLoadingMore = true
         defer { isLoadingMore = false }
-        let location = currentLocation
         do {
             let page = try await client.listFiles(location: location, pageToken: token)
-            guard generation == loadGeneration else { return }
-            let merged = ListingSorter.sort(PageMerger.merge(existing: files, page: page.files), key: location.cacheKey)
-            let listing = CachedListing(key: location.cacheKey, files: merged, nextPageToken: page.nextPageToken, fetchedAt: Date())
-            try await cache.saveListing(accountID: accountID, listing: listing)
-            apply(listing)
+            guard generation == loadGeneration, !Task.isCancelled else { return }
+            try await storePage(page, location: location, generation: generation, resetSeen: false)
             isOffline = false
+        } catch is CancellationError {
+            return
+        } catch let error as DriveAPIError where error == .cancelled {
+            return
         } catch {
             guard generation == loadGeneration else { return }
             if DriveAPIError.isOffline(error) {
@@ -518,6 +616,25 @@ final class BrowserModel: ObservableObject {
                 present(error)
             }
         }
+    }
+
+    private func storePage(_ page: FilePage, location: DriveLocation, generation: Int, resetSeen: Bool) async throws {
+        guard generation == loadGeneration else { return }
+        if resetSeen || seenThisLoad != nil {
+            if resetSeen { seenThisLoad = [] }
+            seenThisLoad?.formUnion(page.files.map(\.id))
+        }
+        let merged = ListingRefresh.mergePage(existing: files, page: page.files, key: location.cacheKey)
+        let listing = CachedListing(
+            key: location.cacheKey,
+            files: merged,
+            nextPageToken: page.nextPageToken,
+            fetchedAt: Date()
+        )
+        memory.store(listing)
+        try await cache.saveListing(accountID: accountID, listing: listing)
+        guard generation == loadGeneration else { return }
+        apply(listing)
     }
 
     private func refreshDrives() async {
@@ -530,6 +647,89 @@ final class BrowserModel: ObservableObject {
         }
     }
 
+    private func refreshDesiredPrefetch() {
+        guard PrefetchPlanner.allowsNetworkPrefetch(isConstrained: network.isConstrained) else {
+            setDesiredPrefetch([])
+            return
+        }
+        var jobs: [PrefetchJob] = []
+        var locations: [String: DriveLocation] = [:]
+        let driveFallback = path.root.sharedDriveID
+        func add(_ file: DriveFile, priority: Int) {
+            guard file.isFolder else { return }
+            let location = DriveLocation.folder(id: file.id, name: file.name, sharedDriveID: file.driveId ?? driveFallback)
+            let key = location.cacheKey
+            locations[key] = location
+            if let index = jobs.firstIndex(where: { $0.id == key }) {
+                if priority < jobs[index].priority {
+                    jobs[index] = PrefetchJob(id: key, priority: priority)
+                }
+            } else {
+                jobs.append(PrefetchJob(id: key, priority: priority))
+            }
+        }
+        if let hoveredFolderID, let file = files.first(where: { $0.id == hoveredFolderID }) {
+            add(file, priority: 0)
+        }
+        if let selected = singleSelection() {
+            add(selected, priority: 1)
+        }
+        for folder in PrefetchPlanner.subfolders(in: files) {
+            add(folder, priority: 5)
+        }
+        prefetchLocations = locations
+        setDesiredPrefetch(jobs)
+    }
+
+    private func setDesiredPrefetch(_ jobs: [PrefetchJob]) {
+        let decision = folderPrefetch.setRelevant(jobs)
+        for job in decision.cancel {
+            prefetchTokens[job.id] = UUID()
+            prefetchTasks[job.id]?.cancel()
+            prefetchTasks[job.id] = nil
+        }
+        for job in decision.start {
+            startPrefetch(job)
+        }
+    }
+
+    private func startPrefetch(_ job: PrefetchJob) {
+        let token = UUID()
+        prefetchTokens[job.id] = token
+        let location = prefetchLocations[job.id]
+        prefetchTasks[job.id] = Task { [weak self] in
+            await self?.runPrefetch(location)
+            guard let self, self.prefetchTokens[job.id] == token else { return }
+            self.prefetchTasks[job.id] = nil
+            let more = self.folderPrefetch.finished(job.id)
+            for next in more {
+                self.startPrefetch(next)
+            }
+        }
+    }
+
+    private func runPrefetch(_ location: DriveLocation?) async {
+        guard let location, !Task.isCancelled else { return }
+        if let existing = memory.listing(for: location.cacheKey), !ListingFreshness.isStale(existing, now: Date()) {
+            return
+        }
+        guard PrefetchPlanner.allowsNetworkPrefetch(isConstrained: network.isConstrained) else { return }
+        do {
+            let page = try await client.listFiles(location: location, pageToken: nil)
+            guard !Task.isCancelled else { return }
+            let sorted = ListingSorter.sort(page.files, key: location.cacheKey)
+            let listing = CachedListing(key: location.cacheKey, files: sorted, nextPageToken: page.nextPageToken, fetchedAt: Date())
+            memory.store(listing)
+            metadata.remember(sorted)
+            try? await cache.saveListing(accountID: accountID, listing: listing)
+            if currentLocation.cacheKey == location.cacheKey, files.isEmpty {
+                apply(listing)
+            }
+        } catch {
+            return
+        }
+    }
+
     private func navigateToFolder(id: String, name: String, driveID: String?) {
         clearSearchSilently()
         if let driveID, path.root.sharedDriveID != driveID {
@@ -538,7 +738,7 @@ final class BrowserModel: ObservableObject {
         } else {
             navigation.openFolder(id: id, name: name)
         }
-        Task { await reload(forceFull: false) }
+        scheduleReload(forceFull: false)
     }
 
     private func ensureLocalFile(_ file: DriveFile) async throws -> URL {
@@ -590,11 +790,21 @@ final class BrowserModel: ObservableObject {
     }
 
     private func apply(_ listing: CachedListing) {
-        files = listing.files
-        nextPageToken = listing.nextPageToken
-        selection = selection.filter { id in files.contains { $0.id == id } }
+        let next = ListingReconciler.reconcile(current: files, incoming: listing.files)
+        if next != files {
+            files = next
+        }
+        if nextPageToken != listing.nextPageToken {
+            nextPageToken = listing.nextPageToken
+        }
+        let valid = Set(next.map(\.id))
+        if selection.contains(where: { !valid.contains($0) }) {
+            selection = selection.intersection(valid)
+        }
+        metadata.remember(next)
         if let mediaSession {
             mediaSession.replacePlaylist(files)
+            mediaSession.allowsPrefetch = !network.isConstrained
         }
     }
 
@@ -606,15 +816,11 @@ final class BrowserModel: ObservableObject {
             files[index] = file
             files = ListingSorter.sort(files, key: currentLocation.cacheKey)
         }
-        Task {
-            guard var listing = try? await cache.listing(accountID: accountID, key: currentLocation.cacheKey) else { return }
-            if removeFromCurrent {
-                listing.files.removeAll { $0.id == file.id }
-            } else if let index = listing.files.firstIndex(where: { $0.id == file.id }) {
-                listing.files[index] = file
-                listing.files = ListingSorter.sort(listing.files, key: listing.key)
-            }
-            try? await cache.saveListing(accountID: accountID, listing: listing)
+        let snapshot = CachedListing(key: currentLocation.cacheKey, files: files, nextPageToken: nextPageToken, fetchedAt: Date())
+        memory.store(snapshot)
+        metadata.remember(file)
+        Task { [cache, accountID] in
+            try? await cache.saveListing(accountID: accountID, listing: snapshot)
         }
     }
 
@@ -623,21 +829,17 @@ final class BrowserModel: ObservableObject {
         guard !files.contains(where: { $0.id == file.id }) else { return }
         files.append(file)
         files = ListingSorter.sort(files, key: currentLocation.cacheKey)
-        Task {
-            var listing = (try? await cache.listing(accountID: accountID, key: currentLocation.cacheKey))
-                ?? CachedListing(key: currentLocation.cacheKey, files: [], nextPageToken: nil, fetchedAt: Date())
-            if !listing.files.contains(where: { $0.id == file.id }) {
-                listing.files.append(file)
-                listing.files = ListingSorter.sort(listing.files, key: listing.key)
-                listing.fetchedAt = Date()
-                try? await cache.saveListing(accountID: accountID, listing: listing)
-            }
+        let snapshot = CachedListing(key: currentLocation.cacheKey, files: files, nextPageToken: nextPageToken, fetchedAt: Date())
+        memory.store(snapshot)
+        metadata.remember(file)
+        Task { [cache, accountID] in
+            try? await cache.saveListing(accountID: accountID, listing: snapshot)
         }
     }
 
     private func commitSearch(_ text: String) async {
         activeSearch = SearchQuery.normalized(text)
-        await reload(forceFull: true)
+        scheduleReload(forceFull: true)
     }
 
     private func clearSearchSilently() {

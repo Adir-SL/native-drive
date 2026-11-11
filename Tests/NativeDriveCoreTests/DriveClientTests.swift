@@ -18,7 +18,10 @@ final class DriveClientTests: XCTestCase {
         let items = try XCTUnwrap(URLComponents(url: request.url, resolvingAgainstBaseURL: false)?.queryItems)
         XCTAssertEqual(items.first(where: { $0.name == "q" })?.value, "'root' in parents and trashed = false")
         XCTAssertEqual(items.first(where: { $0.name == "supportsAllDrives" })?.value, "true")
+        XCTAssertEqual(items.first(where: { $0.name == "pageSize" })?.value, "1000")
         XCTAssertTrue(items.contains(where: { $0.name == "fields" && ($0.value?.contains("nextPageToken") == true) }))
+        XCTAssertTrue(items.contains(where: { $0.name == "fields" && ($0.value?.contains("thumbnailLink") == true) }))
+        XCTAssertFalse(items.contains(where: { $0.name == "fields" && ($0.value?.contains("photoLink") == true) }))
         let calls = await auth.recordedCalls()
         XCTAssertEqual(calls, [false])
     }

@@ -77,8 +77,7 @@ struct FileBrowserView: View {
     @ViewBuilder
     private var table: some View {
         if browser.files.isEmpty && browser.isRefreshing {
-            ProgressView("Loading")
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            skeleton
         } else if browser.files.isEmpty {
             ContentUnavailableView(
                 browser.activeSearch == nil ? "Empty" : "No results",
@@ -89,11 +88,12 @@ struct FileBrowserView: View {
             Table(browser.files, selection: $browser.selection) {
                 TableColumn("Name") { file in
                     HStack(spacing: 8) {
-                        FileTypeIcon(file: file)
+                        RowThumbnail(file: file, browser: browser)
                         Text(file.name)
                             .lineLimit(1)
                     }
                     .onTapGesture(count: 2) { Task { await browser.open(file) } }
+                    .onHover { browser.hover(file, inside: $0) }
                     .contextMenu { contextMenu(for: file) }
                     .onDrag { browser.dragProvider(for: file) }
                     .dropDestination(for: URL.self) { urls, _ in
@@ -131,7 +131,24 @@ struct FileBrowserView: View {
                 }
                 .width(min: 120, ideal: 180)
             }
+            .transaction { $0.animation = nil }
+            .onChange(of: browser.selection) { _, _ in
+                browser.prefetchSelection()
+            }
         }
+    }
+
+    private var skeleton: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            ForEach(0..<8, id: \.self) { _ in
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(.quaternary)
+                    .frame(height: 14)
+            }
+            Spacer()
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     @ViewBuilder
@@ -152,6 +169,30 @@ struct FileBrowserView: View {
             .disabled(targets.count != 1)
         Button("Move to Trash") { Task { await browser.trash(targets) } }
         Button("Copy Link") { browser.copyLink(file) }
+    }
+}
+
+private struct RowThumbnail: View {
+    let file: DriveFile
+    @ObservedObject var browser: BrowserModel
+    @State private var image: NSImage?
+
+    var body: some View {
+        Group {
+            if let image, MediaClassifier.kind(of: file) == .image {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                FileTypeIcon(file: file)
+            }
+        }
+        .frame(width: 18, height: 18)
+        .clipShape(RoundedRectangle(cornerRadius: 2))
+        .task(id: file.id) {
+            guard MediaClassifier.kind(of: file) == .image else { return }
+            image = await browser.thumbnail(for: file, edge: ThumbnailPlan.rowEdge)
+        }
     }
 }
 

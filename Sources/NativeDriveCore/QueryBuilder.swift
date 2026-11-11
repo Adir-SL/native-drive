@@ -29,7 +29,14 @@ public struct FilesListQuery: Equatable, Sendable {
 }
 
 public enum DriveQueryBuilder {
-    public static let defaultPageSize = 100
+    public static let defaultPageSize = 1_000
+    public static let maxPageSize = 1_000
+
+    public static func clampedPageSize(_ value: Int) -> Int {
+        if value < 1 { return 1 }
+        if value > maxPageSize { return maxPageSize }
+        return value
+    }
 
     public static func escapeQueryLiteral(_ value: String) -> String {
         var output = ""
@@ -50,7 +57,7 @@ public enum DriveQueryBuilder {
                 q: "'root' in parents and trashed = false",
                 orderBy: "folder,name",
                 pageToken: pageToken,
-                pageSize: pageSize,
+                pageSize: clampedPageSize(pageSize),
                 corpora: "user",
                 driveId: nil
             )
@@ -65,7 +72,7 @@ public enum DriveQueryBuilder {
                 q: "sharedWithMe = true and trashed = false",
                 orderBy: "folder,name",
                 pageToken: pageToken,
-                pageSize: pageSize,
+                pageSize: clampedPageSize(pageSize),
                 corpora: "user",
                 driveId: nil
             )
@@ -74,7 +81,7 @@ public enum DriveQueryBuilder {
                 q: "trashed = false",
                 orderBy: "viewedByMeTime desc",
                 pageToken: pageToken,
-                pageSize: pageSize,
+                pageSize: clampedPageSize(pageSize),
                 corpora: "allDrives",
                 driveId: nil
             )
@@ -83,7 +90,7 @@ public enum DriveQueryBuilder {
                 q: "starred = true and trashed = false",
                 orderBy: "folder,name",
                 pageToken: pageToken,
-                pageSize: pageSize,
+                pageSize: clampedPageSize(pageSize),
                 corpora: "allDrives",
                 driveId: nil
             )
@@ -92,7 +99,7 @@ public enum DriveQueryBuilder {
                 q: "trashed = true",
                 orderBy: "modifiedTime desc",
                 pageToken: pageToken,
-                pageSize: pageSize,
+                pageSize: clampedPageSize(pageSize),
                 corpora: "allDrives",
                 driveId: nil
             )
@@ -106,7 +113,7 @@ public enum DriveQueryBuilder {
                 q: query,
                 orderBy: "folder,modifiedTime desc",
                 pageToken: pageToken,
-                pageSize: pageSize,
+                pageSize: clampedPageSize(pageSize),
                 corpora: "allDrives",
                 driveId: nil
             )
@@ -124,7 +131,7 @@ public enum DriveQueryBuilder {
         FilesListQuery(
             q: q,
             orderBy: orderBy,
-            pageSize: pageSize,
+            pageSize: clampedPageSize(pageSize),
             pageToken: pageToken,
             corpora: corpora,
             driveId: driveId,
