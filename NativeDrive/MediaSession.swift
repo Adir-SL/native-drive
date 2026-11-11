@@ -446,17 +446,18 @@ final class MediaSession: ObservableObject {
         if let existing = downloads[file.id] {
             return try await existing.value
         }
-        let task = Task { @MainActor in
-            try await self.downloadFile(file, to: destination)
+        let task: Task<URL, Error> = Task { @MainActor in
+            let downloaded = try await self.downloadFile(file, to: destination)
+            return downloaded
         }
         downloads[file.id] = task
         defer { downloads[file.id] = nil }
-        let url = try await task.value
+        let url: URL = try await task.value
         evictUnneededMedia()
         return url
     }
 
-    private func downloadFile(_ file: DriveFile, to destination: URL) async throws {
+    private func downloadFile(_ file: DriveFile, to destination: URL) async throws -> URL {
         try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
         let partial = destination.appendingPathExtension("partial")
         var attempt = 0
@@ -468,7 +469,7 @@ final class MediaSession: ObservableObject {
                 let knownSize = file.size
                 let fileID = file.id
                 try await client.download(fileID: fileID, to: partial) { [weak self] bytes, total in
-                    let fraction = Self.fraction(bytes: bytes, total: total, known: knownSize)
+                    let fraction = MediaDownloadProgress.fraction(bytes: bytes, total: total, known: knownSize)
                     Task { @MainActor [weak self] in
                         guard let self, self.fileID == fileID else { return }
                         self.downloadFraction = fraction
@@ -482,7 +483,7 @@ final class MediaSession: ObservableObject {
                 }
                 try FileManager.default.moveItem(at: partial, to: destination)
                 touch(destination)
-                return
+                return destination
             } catch {
                 if MediaFailure.isCancellation(error) || Task.isCancelled {
                     throw CancellationError()
@@ -493,12 +494,6 @@ final class MediaSession: ObservableObject {
                 try await Task.sleep(nanoseconds: delay)
             }
         }
-    }
-
-    private static func fraction(bytes: Int64, total: Int64?, known: Int64?) -> Double {
-        let denominator = (total ?? 0) > 0 ? total! : (known ?? 0)
-        guard denominator > 0 else { return 0 }
-        return min(1, Double(bytes) / Double(denominator))
     }
 
     private func cachedThumbnail(for file: DriveFile) -> NSImage? {

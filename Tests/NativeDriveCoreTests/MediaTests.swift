@@ -147,6 +147,10 @@ final class MediaTests: XCTestCase {
         XCTAssertEqual(MediaRetry.delayNanoseconds(attempt: 1, retryAfter: nil), 1_000_000_000)
         XCTAssertEqual(MediaRetry.delayNanoseconds(attempt: 0, retryAfter: 2), 2_000_000_000)
         XCTAssertEqual(MediaRetry.delayNanoseconds(attempt: 10, retryAfter: nil), 8_000_000_000)
+        XCTAssertEqual(MediaDownloadProgress.fraction(bytes: 0, total: nil, known: nil), 0)
+        XCTAssertEqual(MediaDownloadProgress.fraction(bytes: 25, total: nil, known: 100), 0.25)
+        XCTAssertEqual(MediaDownloadProgress.fraction(bytes: 50, total: 200, known: 100), 0.25)
+        XCTAssertEqual(MediaDownloadProgress.fraction(bytes: 500, total: 100, known: nil), 1)
     }
 
     func testMediaURLRequestsFileBytes() throws {

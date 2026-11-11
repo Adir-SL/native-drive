@@ -242,6 +242,16 @@ public enum MediaFailure {
     }
 }
 
+public enum MediaDownloadProgress {
+    /// `total` is the length reported by the response. `known` is the size Drive already listed.
+    public static func fraction(bytes: Int64, total: Int64?, known: Int64?) -> Double {
+        let reported = total ?? 0
+        let denominator = reported > 0 ? reported : (known ?? 0)
+        guard denominator > 0 else { return 0 }
+        return min(1, Double(bytes) / Double(denominator))
+    }
+}
+
 public enum MediaRetry {
     public static let maxAttempts = 4
 
