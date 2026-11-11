@@ -1,8 +1,9 @@
-// Checked-in defaults. Copy Config.example.xcconfig to Config.local.xcconfig
-// and put the real OAuth client there. The local file overrides these values
-// and is gitignored.
+// Checked-in defaults. The Desktop OAuth client ID is public and ships here.
+// The client secret must not be committed. Copy Config.example.xcconfig to
+// Config.local.xcconfig, set GOOGLE_CLIENT_SECRET, and rebuild.
+// Values in Config.local.xcconfig override these.
 
-GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_ID=438919472583-fu1nekhd5fq8rh3326bk65qfjcjvtfek.apps.googleusercontent.com
 GOOGLE_CLIENT_SECRET=
 GOOGLE_OAUTH_REDIRECT_SCHEME=nativedrive
 GOOGLE_OAUTH_USE_LOOPBACK=YES

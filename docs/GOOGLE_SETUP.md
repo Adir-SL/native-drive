@@ -1,6 +1,6 @@
 # Google Cloud setup
 
-Native Drive signs in with OAuth 2.0 (authorization code plus PKCE) and calls the Google Drive API directly. The OAuth client ID is **not** in the repository. You create a client in Google Cloud and put it in `Config.local.xcconfig`, which is gitignored.
+Native Drive signs in with OAuth 2.0 (authorization code plus PKCE) and calls the Google Drive API directly. The Desktop OAuth **client ID** ships in `Config.xcconfig`. The **client secret** does not: Google requires it for a Desktop client's token exchange, and it belongs only in gitignored `Config.local.xcconfig`.
 
 ## 1. Create a project and enable Drive
 
@@ -17,12 +17,17 @@ Native Drive signs in with OAuth 2.0 (authorization code plus PKCE) and calls th
 
 Desktop clients are the path this build uses by default (loopback on `127.0.0.1`).
 
-### Desktop client (recommended)
+### Desktop client (this repository)
 
-1. **APIs & Services → Credentials → Create credentials → OAuth client ID**.
-2. Application type: **Desktop app**.
-3. Copy the **client ID** and **client secret**.
-4. You do not register a redirect URI. Google allows `http://127.0.0.1` with any port for Desktop clients. Native Drive binds an ephemeral port and uses that exact URI for the code exchange.
+The checked-in client ID is:
+
+```text
+438919472583-fu1nekhd5fq8rh3326bk65qfjcjvtfek.apps.googleusercontent.com
+```
+
+It is a Desktop app client. You do not register a redirect URI. Google allows `http://127.0.0.1` with any port for Desktop clients. Native Drive binds an ephemeral port and uses that exact URI for the code exchange.
+
+Copy the **client secret** from the same credential in Google Cloud Console. Do not commit it. The token exchange fails without it, so the app asks for `GOOGLE_CLIENT_SECRET` until you rebuild with the secret set locally.
 
 ### iOS-type client (custom URL scheme)
 
@@ -39,7 +44,7 @@ Use this if you want `ASWebAuthenticationSession` to receive the redirect itself
 
    Register that scheme in `GOOGLE_OAUTH_REDIRECT_SCHEME` (no `:/` suffix). Leave the client secret empty.
 
-## 3. Point the Xcode build at the client
+## 3. Add the client secret locally
 
 From the repository root:
 
@@ -47,23 +52,24 @@ From the repository root:
 cp Config.example.xcconfig Config.local.xcconfig
 ```
 
-Edit `Config.local.xcconfig`:
+Edit `Config.local.xcconfig` and set only the secret:
 
 ```text
-GOOGLE_CLIENT_ID=YOUR_ID.apps.googleusercontent.com
-GOOGLE_CLIENT_SECRET=YOUR_SECRET
+GOOGLE_CLIENT_SECRET=the-secret-from-google-cloud
 GOOGLE_OAUTH_USE_LOOPBACK=YES
 GOOGLE_OAUTH_REDIRECT_SCHEME=nativedrive
 ```
 
-For an iOS-type client, set `GOOGLE_OAUTH_USE_LOOPBACK=NO` and set `GOOGLE_OAUTH_REDIRECT_SCHEME` to the reversed client ID.
+Leave `GOOGLE_CLIENT_ID` unset in that file so the ID in `Config.xcconfig` is used. `Config.xcconfig` includes `Config.local.xcconfig` when it exists, and the local values override the defaults. Do not commit `Config.local.xcconfig`.
 
-`Config.xcconfig` (checked in) supplies defaults and optionally includes `Config.local.xcconfig`. Do not commit `Config.local.xcconfig`. The client secret stays on your machine; it is still not a highly protected secret for an installed app, which is why the app also sends PKCE.
+Until that secret is present, the app shows setup instructions and does not offer sign-in. After you rebuild, **Sign in with Google** is available.
 
-Rebuild after changing the xcconfig. The values are copied into Info.plist at build time. Changing the file without rebuilding does nothing.
+For an iOS-type client, set `GOOGLE_OAUTH_USE_LOOPBACK=NO`, set `GOOGLE_OAUTH_REDIRECT_SCHEME` to the reversed client ID, and leave the secret empty. That public-client flow can sign in without a secret.
+
+Rebuild after changing the xcconfig. The values are copied into Info.plist at build time. Changing the file without rebuilding does nothing. The app also sends PKCE on every token exchange.
 
 ## 4. Sign in
 
-Run Native Drive, choose **Add Account**, and complete the Google prompt. Repeat for each Google account. Each account has its own Keychain item and its own cache directory under Application Support. **Sign Out** deletes that account's tokens and cached listings on this Mac.
+Run Native Drive, choose **Sign in with Google**, and complete the Google prompt. Repeat with **Add Account** for each Google account. Each account has its own Keychain item and its own cache directory under Application Support. **Sign Out** deletes that account's tokens and cached listings on this Mac.
 
 Cmd+1 through Cmd+9 switch the first nine accounts in the order they were added.

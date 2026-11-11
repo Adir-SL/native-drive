@@ -5,7 +5,7 @@ struct ContentView: View {
 
     var body: some View {
         Group {
-            if !AppConfig.isConfigured {
+            if !AppConfig.canSignIn {
                 SetupView(showsClose: false)
             } else if let browser = model.browser {
                 BrowserScreen(browser: browser, transfers: model.transfers)
@@ -66,7 +66,7 @@ struct WelcomeView: View {
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: 420)
-            Button(model.isSigningIn ? "Waiting for Google…" : "Add Account") {
+            Button(model.isSigningIn ? "Waiting for Google…" : "Sign in with Google") {
                 model.addAccount()
             }
             .keyboardShortcut(.defaultAction)
@@ -88,17 +88,20 @@ struct SetupView: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Google Drive setup")
                 .font(.title2)
-            Text("Native Drive reads the OAuth client from Config.local.xcconfig at build time. The client ID is not stored in the repository.")
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            setupMessage
             GroupBox("This build") {
                 Text(AppConfig.configurationSummary)
                     .font(.system(.body, design: .monospaced))
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            Text("Copy Config.example.xcconfig to Config.local.xcconfig, paste the Desktop OAuth client, run xcodegen, and rebuild. The steps are in docs/GOOGLE_SETUP.md.")
-                .fixedSize(horizontal: false, vertical: true)
+            if AppConfig.canSignIn {
+                Button(model.isSigningIn ? "Waiting for Google…" : "Sign in with Google") {
+                    model.addAccount()
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(model.isSigningIn)
+            }
             HStack {
                 Spacer()
                 if showsClose {
@@ -109,5 +112,24 @@ struct SetupView: View {
         }
         .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    @ViewBuilder
+    private var setupMessage: some View {
+        if AppConfig.needsClientSecret {
+            Text("Add GOOGLE_CLIENT_SECRET to Config.local.xcconfig (copy from Config.example.xcconfig) and rebuild.")
+                .fontWeight(.semibold)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("The Desktop client ID is already in this build. Google requires the client secret for the token exchange, and that secret stays on your Mac.")
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        } else if !AppConfig.isConfigured {
+            Text("This build has no Google OAuth client ID. Set GOOGLE_CLIENT_ID in Config.xcconfig or Config.local.xcconfig and rebuild.")
+                .fixedSize(horizontal: false, vertical: true)
+        } else {
+            Text("This build can sign in with the Google OAuth client baked in at build time.")
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 }

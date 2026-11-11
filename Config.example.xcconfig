@@ -1,18 +1,19 @@
-// Copy this file to Config.local.xcconfig (gitignored) and fill in the OAuth
-// client from Google Cloud. See docs/GOOGLE_SETUP.md.
+// Copy this file to Config.local.xcconfig (gitignored) and rebuild.
+// See docs/GOOGLE_SETUP.md.
 //
-// Desktop app client (recommended):
-//   GOOGLE_OAUTH_USE_LOOPBACK = YES
-//   Paste both the client ID and the client secret.
+// The repository already sets the Desktop client ID in Config.xcconfig:
+//   438919472583-fu1nekhd5fq8rh3326bk65qfjcjvtfek.apps.googleusercontent.com
+// Do not commit a client secret. Put it only in Config.local.xcconfig.
 //
-// iOS-type client with a custom URL scheme:
-//   GOOGLE_OAUTH_USE_LOOPBACK = NO
-//   GOOGLE_OAUTH_REDIRECT_SCHEME = the reversed client ID
-//   (com.googleusercontent.apps.YOUR_CLIENT_PREFIX)
-//   Leave the secret empty. The app then uses ASWebAuthenticationSession
-//   with redirect URI {SCHEME}:/oauth2callback.
+// Desktop client (default, loopback on 127.0.0.1):
+//   Google requires GOOGLE_CLIENT_SECRET on the token exchange.
+//   Leave GOOGLE_OAUTH_USE_LOOPBACK as YES.
+//
+// iOS-type client with a custom URL scheme (secret not used):
+//   GOOGLE_OAUTH_USE_LOOPBACK=NO
+//   GOOGLE_OAUTH_REDIRECT_SCHEME=com.googleusercontent.apps.YOUR_PREFIX
+//   The app then uses redirect URI {SCHEME}:/oauth2callback.
 
-GOOGLE_CLIENT_ID=YOUR_CLIENT_ID.apps.googleusercontent.com
 GOOGLE_CLIENT_SECRET=
 GOOGLE_OAUTH_REDIRECT_SCHEME=nativedrive
 GOOGLE_OAUTH_USE_LOOPBACK=YES

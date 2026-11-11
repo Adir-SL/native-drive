@@ -24,7 +24,7 @@ struct NativeDriveCommands: Commands {
         CommandGroup(after: .newItem) {
             Button("Add Account…") { model.addAccount() }
                 .keyboardShortcut("a", modifiers: [.command, .shift])
-                .disabled(!AppConfig.isConfigured || model.isSigningIn)
+                .disabled(!AppConfig.canSignIn || model.isSigningIn)
         }
         CommandMenu("File") {
             Button("Open") { model.browser?.openSelection() }

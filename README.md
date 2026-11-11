@@ -36,7 +36,7 @@ brew install xcodegen && xcodegen && open NativeDrive.xcodeproj
 
 Requirements: macOS 14 or later, and Xcode 15 or later. Code signing in the generated project is ad hoc (`CODE_SIGN_IDENTITY = -`) so the app can run locally. Set your team in Xcode if you want a development certificate instead.
 
-Before the first build, create `Config.local.xcconfig` from the example (see Setup). An empty client ID still compiles; the window explains what is missing.
+Before the first build, copy `Config.example.xcconfig` to `Config.local.xcconfig` and set `GOOGLE_CLIENT_SECRET` (see Setup). The Desktop client ID is already in `Config.xcconfig`. The window explains what is missing.
 
 The Drive API, OAuth, cache, and account model live in the `NativeDriveCore` Swift package. On a machine with a Swift toolchain:
 
@@ -46,7 +46,7 @@ swift test
 
 ## Setup
 
-Create a Google Cloud OAuth client, enable the Drive API, and put the client ID in a gitignored `Config.local.xcconfig`. Steps: [docs/GOOGLE_SETUP.md](docs/GOOGLE_SETUP.md).
+The Desktop client ID ships in `Config.xcconfig`. Put only the client secret in gitignored `Config.local.xcconfig`, then rebuild. Steps: [docs/GOOGLE_SETUP.md](docs/GOOGLE_SETUP.md).
 
 ## Contributing
 

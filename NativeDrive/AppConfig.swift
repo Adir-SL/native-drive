@@ -25,6 +25,16 @@ enum AppConfig {
         return !id.isEmpty && !id.contains("$") && !id.hasPrefix("YOUR_")
     }
 
+    /// Desktop (loopback) token exchange requires the client secret. A custom-scheme
+    /// iOS client can sign in with PKCE and no secret.
+    static var needsClientSecret: Bool {
+        isConfigured && useLoopback && clientSecret == nil
+    }
+
+    static var canSignIn: Bool {
+        isConfigured && !needsClientSecret
+    }
+
     static var configurationSummary: String {
         let secret = clientSecret == nil ? "not set" : "set"
         let mode = useLoopback ? "loopback on 127.0.0.1 (Desktop client)" : "custom scheme \(redirectScheme):/oauth2callback"
@@ -36,7 +46,7 @@ enum AppConfig {
     }
 
     static func oauthConfig() -> OAuthClientConfig? {
-        guard isConfigured else { return nil }
+        guard canSignIn else { return nil }
         let redirect = useLoopback ? "http://127.0.0.1" : "\(redirectScheme):/oauth2callback"
         return OAuthClientConfig(clientID: clientID, clientSecret: clientSecret, redirectURI: redirect)
     }

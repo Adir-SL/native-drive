@@ -106,7 +106,7 @@ struct AccountMenu: View {
             Button(model.isSigningIn ? "Waiting for Google…" : "Add Account…") {
                 model.addAccount()
             }
-            .disabled(model.isSigningIn)
+            .disabled(!AppConfig.canSignIn || model.isSigningIn)
             Button("Sign Out") { model.pendingSignOut = true }
                 .disabled(model.activeAccount == nil)
         } label: {

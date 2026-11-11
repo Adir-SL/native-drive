@@ -79,7 +79,7 @@ final class AppModel: ObservableObject {
     }
 
     func addAccount() {
-        guard AppConfig.isConfigured, let config = AppConfig.oauthConfig() else {
+        guard let config = AppConfig.oauthConfig() else {
             showSetup = true
             return
         }
