@@ -195,15 +195,31 @@ public struct DriveClient: Sendable {
         return CollectedChanges(changes: all, nextStartToken: token, incomplete: true)
     }
 
+    public func mediaURL(fileID: String) throws -> URL {
+        try endpoint("/drive/v3/files/\(pathComponent(fileID))", query: [
+            URLQueryItem(name: "alt", value: "media"),
+            URLQueryItem(name: "supportsAllDrives", value: "true")
+        ])
+    }
+
+    public func accessToken(forceRefresh: Bool = false) async throws -> String {
+        try await auth.accessToken(forceRefresh: forceRefresh)
+    }
+
     public func download(
         fileID: String,
         to destination: URL,
         onProgress: @escaping @Sendable (Int64, Int64?) -> Void
     ) async throws {
-        let url = try endpoint("/drive/v3/files/\(pathComponent(fileID))", query: [
-            URLQueryItem(name: "alt", value: "media"),
-            URLQueryItem(name: "supportsAllDrives", value: "true")
-        ])
+        let url = try mediaURL(fileID: fileID)
+        try await downloadAuthenticated(from: url, to: destination, onProgress: onProgress)
+    }
+
+    public func downloadAuthenticated(
+        from url: URL,
+        to destination: URL,
+        onProgress: @escaping @Sendable (Int64, Int64?) -> Void
+    ) async throws {
         try await retry.execute {
             let response = try await self.authorizedDownload(url: url, to: destination, forceRefresh: false, onProgress: onProgress)
             if response.status == 401 {
