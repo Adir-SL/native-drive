@@ -1,0 +1,55 @@
+name: NativeDrive
+options:
+  bundleIdPrefix: app.nativedrive
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+  developmentLanguage: en
+
+configs:
+  Debug: debug
+  Release: release
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: "-"
+    DEVELOPMENT_TEAM: ""
+    ENABLE_HARDENED_RUNTIME: YES
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+
+configFiles:
+  Debug: Config.xcconfig
+  Release: Config.xcconfig
+
+packages:
+  NativeDriveCore:
+    path: .
+
+targets:
+  NativeDrive:
+    type: application
+    platform: macOS
+    sources:
+      - path: NativeDrive
+        excludes:
+          - Info.plist
+          - NativeDrive.entitlements
+    dependencies:
+      - package: NativeDriveCore
+        product: NativeDriveCore
+    settings:
+      base:
+        PRODUCT_NAME: NativeDrive
+        PRODUCT_BUNDLE_IDENTIFIER: app.nativedrive.NativeDrive
+        INFOPLIST_FILE: NativeDrive/Info.plist
+        CODE_SIGN_ENTITLEMENTS: NativeDrive/NativeDrive.entitlements
+        GENERATE_INFOPLIST_FILE: NO
+        COMBINE_HIDPI_IMAGES: YES
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks"
+    scheme:
+      gatherCoverageData: false

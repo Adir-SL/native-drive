@@ -1,0 +1,10 @@
+// Checked-in defaults. Copy Config.example.xcconfig to Config.local.xcconfig
+// and put the real OAuth client there. The local file overrides these values
+// and is gitignored.
+
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+GOOGLE_OAUTH_REDIRECT_SCHEME=nativedrive
+GOOGLE_OAUTH_USE_LOOPBACK=YES
+
+#include? "Config.local.xcconfig"
