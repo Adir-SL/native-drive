@@ -43,6 +43,9 @@ final class BrowserModel: ObservableObject {
     private var prefetchLocations: [String: DriveLocation] = [:]
     private var hoveredFolderID: String?
     private var seenThisLoad: Set<String>?
+    private var pinnedIDs = Set<String>()
+    @Published var renamingID: String?
+    @Published var renameDraft = ""
     private let thumbnails: ThumbnailFetcher
     private let network = NetworkConditions()
 
@@ -65,6 +68,16 @@ final class BrowserModel: ObservableObject {
         if activeSearch != nil { return "Search" }
         if let folder = path.folders.last { return folder.name }
         return path.root.title
+    }
+
+    var creationDeniedReason: String? {
+        if case .denied(let reason) = CreationPolicy.access(
+            location: currentLocation,
+            canAddChildren: path.folders.last?.canAddChildren
+        ) {
+            return reason
+        }
+        return nil
     }
 
     var currentLocation: DriveLocation {
@@ -216,7 +229,7 @@ final class BrowserModel: ObservableObject {
     func open(_ file: DriveFile) async {
         if file.isFolder || (file.isShortcut && file.shortcutDetails?.targetMimeType == DriveMime.folder) {
             let id = file.isShortcut ? (file.shortcutDetails?.targetId ?? file.id) : file.id
-            navigateToFolder(id: id, name: file.name, driveID: file.driveId)
+            navigateToFolder(id: id, name: file.name, driveID: file.driveId, canAddChildren: file.isShortcut ? nil : file.capabilities?.canAddChildren)
             return
         }
         if file.isGoogleNative || file.isShortcut {
@@ -351,9 +364,43 @@ final class BrowserModel: ObservableObject {
         }
     }
 
+    func makeNew(_ kind: NewItemKind) {
+        guard case .allowed(let parentID) = CreationPolicy.access(
+            location: currentLocation,
+            canAddChildren: path.folders.last?.canAddChildren
+        ) else { return }
+        Task { await self.createItem(kind, parentID: parentID) }
+    }
+
+    func chooseFilesToUpload() {
+        chooseUpload(folders: false)
+    }
+
+    func chooseFoldersToUpload() {
+        chooseUpload(folders: true)
+    }
+
+    func commitInlineRename() {
+        guard let id = renamingID, !NewItem.isLocalID(id), let file = files.first(where: { $0.id == id }) else {
+            renamingID = nil
+            return
+        }
+        let draft = renameDraft
+        renamingID = nil
+        Task { await self.rename(file, to: draft) }
+    }
+
+    func cancelInlineRename() {
+        renamingID = nil
+    }
+
     func upload(urls: [URL], parentID: String?) {
         guard let parentID else {
             errorMessage = "Open a folder in My Drive or a shared drive before uploading."
+            return
+        }
+        if parentID == currentLocation.uploadParentID, let reason = creationDeniedReason {
+            errorMessage = reason
             return
         }
         let paths = urls.map(\.path).sorted()
@@ -375,34 +422,166 @@ final class BrowserModel: ObservableObject {
         }
     }
 
+    private func chooseUpload(folders: Bool) {
+        guard creationDeniedReason == nil else { return }
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = true
+        panel.canChooseFiles = !folders
+        panel.canChooseDirectories = folders
+        panel.prompt = "Upload"
+        panel.message = folders ? "Choose folders to upload." : "Choose files to upload."
+        panel.begin { [weak self] response in
+            guard response == .OK else { return }
+            let urls = panel.urls
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.upload(urls: urls, parentID: self.currentLocation.uploadParentID)
+            }
+        }
+    }
+
+    private func createItem(_ kind: NewItemKind, parentID: String) async {
+        let listingKey = currentLocation.cacheKey
+        let localID = NewItem.localID()
+        let placeholder = DriveFile(id: localID, name: kind.defaultName, mimeType: kind.mimeType, parents: [parentID])
+        pinnedIDs.insert(localID)
+        insertUploaded(placeholder, parentID: parentID)
+        do {
+            let created = try await client.createFile(name: kind.defaultName, mimeType: kind.mimeType, parentID: parentID)
+            pinnedIDs.insert(created.id)
+            pinnedIDs.remove(localID)
+            replaceCreated(localID, with: created, parentID: parentID, listingKey: listingKey)
+            guard currentLocation.cacheKey == listingKey else { return }
+            if kind == .folder {
+                selection = [created.id]
+                renameDraft = created.name
+                renamingID = created.id
+            } else if let url = NewItem.editorURL(for: created) {
+                NSWorkspace.shared.open(url)
+            }
+        } catch {
+            pinnedIDs.remove(localID)
+            removeCreated(localID, listingKey: listingKey)
+            present(error)
+        }
+    }
+
+    private func replaceCreated(_ localID: String, with created: DriveFile, parentID: String, listingKey: String) {
+        if currentLocation.cacheKey == listingKey {
+            files.removeAll { $0.id == localID }
+            selection.remove(localID)
+            insertUploaded(created, parentID: parentID)
+            return
+        }
+        guard var listing = memory.listing(for: listingKey) else { return }
+        listing.files.removeAll { $0.id == localID }
+        if !listing.files.contains(where: { $0.id == created.id }) {
+            listing.files.append(created)
+        }
+        listing.files = ListingSorter.sort(listing.files, key: listingKey)
+        listing.fetchedAt = Date()
+        memory.store(listing)
+        metadata.remember(created)
+        let account = accountID
+        Task { [cache] in
+            try? await cache.saveListing(accountID: account, listing: listing)
+        }
+    }
+
+    private func removeCreated(_ localID: String, listingKey: String) {
+        if currentLocation.cacheKey == listingKey {
+            files.removeAll { $0.id == localID }
+            selection.remove(localID)
+            if renamingID == localID { renamingID = nil }
+            saveCurrentListing()
+            return
+        }
+        guard var listing = memory.listing(for: listingKey) else { return }
+        listing.files.removeAll { $0.id == localID }
+        memory.store(listing)
+        let account = accountID
+        Task { [cache] in
+            try? await cache.saveListing(accountID: account, listing: listing)
+        }
+    }
+
     private func startUploads(urls: [URL], parentID: String) {
         for url in urls {
-            var isDirectory: ObjCBool = false
-            if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory), isDirectory.boolValue {
-                errorMessage = "Drop files to upload. Folders from Finder aren't uploaded in this version."
-                continue
-            }
             let accessing = url.startAccessingSecurityScopedResource()
             Task { @MainActor in
                 defer { if accessing { url.stopAccessingSecurityScopedResource() } }
-                do {
-                    let uploaded = try await self.transfers.upload(
-                        fileURL: url,
-                        name: url.lastPathComponent,
-                        mimeType: MimeType.guess(fileName: url.lastPathComponent),
-                        parentID: parentID,
-                        accountID: self.accountID,
-                        client: self.client
-                    )
-                    self.insertUploaded(uploaded, parentID: parentID)
-                } catch is CancellationError {
-                    return
-                } catch let error as DriveAPIError where error == .cancelled {
-                    return
-                } catch {
-                    self.present(error)
+                var isDirectory: ObjCBool = false
+                guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else { return }
+                if isDirectory.boolValue {
+                    await self.uploadFolder(at: url, parentID: parentID)
+                } else {
+                    do {
+                        try await self.uploadOne(url, name: url.lastPathComponent, parentID: parentID)
+                    } catch is CancellationError {
+                        return
+                    } catch let error as DriveAPIError where error == .cancelled {
+                        return
+                    } catch {
+                        self.present(error)
+                    }
                 }
             }
+        }
+    }
+
+    private func uploadFolder(at root: URL, parentID: String) async {
+        let plan = FolderUploadPlan.scan(root: root)
+        var ids: [String: String] = [:]
+        for entry in plan {
+            if Task.isCancelled { return }
+            let parent = FolderUploadPlan.parentRelativePath(entry.relativePath).flatMap { ids[$0] } ?? parentID
+            do {
+                if entry.isDirectory {
+                    let created = try await client.createFile(name: entry.name, mimeType: DriveMime.folder, parentID: parent)
+                    ids[entry.relativePath] = created.id
+                    pinnedIDs.insert(created.id)
+                    insertUploaded(created, parentID: parent)
+                } else {
+                    var fileURL = root.deletingLastPathComponent()
+                    for part in entry.relativePath.split(separator: "/") {
+                        fileURL.appendPathComponent(String(part))
+                    }
+                    let uploaded = try await uploadOne(fileURL, name: entry.name, parentID: parent)
+                    ids[entry.relativePath] = uploaded.id
+                }
+            } catch is CancellationError {
+                return
+            } catch let error as DriveAPIError where error == .cancelled {
+                return
+            } catch {
+                present(error)
+                return
+            }
+        }
+    }
+
+    @discardableResult
+    private func uploadOne(_ url: URL, name: String, parentID: String) async throws -> DriveFile {
+        let uploaded = try await transfers.upload(
+            fileURL: url,
+            name: name,
+            mimeType: MimeType.guess(fileName: name),
+            parentID: parentID,
+            accountID: accountID,
+            client: client
+        )
+        pinnedIDs.insert(uploaded.id)
+        insertUploaded(uploaded, parentID: parentID)
+        return uploaded
+    }
+
+    private func saveCurrentListing() {
+        let snapshot = CachedListing(key: currentLocation.cacheKey, files: files, nextPageToken: nextPageToken, fetchedAt: Date())
+        memory.store(snapshot)
+        metadata.remember(files)
+        let account = accountID
+        Task { [cache] in
+            try? await cache.saveListing(accountID: account, listing: snapshot)
         }
     }
 
@@ -559,7 +738,7 @@ final class BrowserModel: ObservableObject {
             await loadRemainingPages(location: location, generation: generation)
             guard generation == loadGeneration else { return }
             if let seen = seenThisLoad {
-                let closed = ListingRefresh.droppingUnseen(files: files, seen: seen, key: location.cacheKey)
+                let closed = ListingRefresh.droppingUnseen(files: files, seen: seen, pinned: pinnedIDs, key: location.cacheKey)
                 let listing = CachedListing(key: location.cacheKey, files: closed, nextPageToken: nil, fetchedAt: Date())
                 memory.store(listing)
                 try? await cache.saveListing(accountID: accountID, listing: listing)
@@ -624,6 +803,7 @@ final class BrowserModel: ObservableObject {
             if resetSeen { seenThisLoad = [] }
             seenThisLoad?.formUnion(page.files.map(\.id))
         }
+        pinnedIDs.subtract(page.files.map(\.id))
         let merged = ListingRefresh.mergePage(existing: files, page: page.files, key: location.cacheKey)
         let listing = CachedListing(
             key: location.cacheKey,
@@ -730,13 +910,16 @@ final class BrowserModel: ObservableObject {
         }
     }
 
-    private func navigateToFolder(id: String, name: String, driveID: String?) {
+    private func navigateToFolder(id: String, name: String, driveID: String?, canAddChildren: Bool?) {
         clearSearchSilently()
         if let driveID, path.root.sharedDriveID != driveID {
             let driveName = sharedDrives.first(where: { $0.id == driveID })?.name ?? "Shared drive"
-            navigation.replace(path: BrowsePath(root: .sharedDrive(id: driveID, name: driveName), folders: [PathFolder(id: id, name: name)]))
+            navigation.replace(path: BrowsePath(
+                root: .sharedDrive(id: driveID, name: driveName),
+                folders: [PathFolder(id: id, name: name, canAddChildren: canAddChildren)]
+            ))
         } else {
-            navigation.openFolder(id: id, name: name)
+            navigation.openFolder(id: id, name: name, canAddChildren: canAddChildren)
         }
         scheduleReload(forceFull: false)
     }

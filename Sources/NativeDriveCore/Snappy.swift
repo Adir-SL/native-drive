@@ -92,8 +92,9 @@ public enum ListingRefresh {
         return ListingSorter.sort(result, key: key)
     }
 
-    public static func droppingUnseen(files: [DriveFile], seen: Set<String>, key: String) -> [DriveFile] {
-        ListingSorter.sort(files.filter { seen.contains($0.id) }, key: key)
+    /// `pinned` rows were just created locally and must stay even when this refresh has not returned them yet.
+    public static func droppingUnseen(files: [DriveFile], seen: Set<String>, pinned: Set<String> = [], key: String) -> [DriveFile] {
+        ListingSorter.sort(files.filter { seen.contains($0.id) || pinned.contains($0.id) }, key: key)
     }
 }
 

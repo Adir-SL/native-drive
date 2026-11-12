@@ -36,6 +36,14 @@ public struct ShortcutDetails: Codable, Equatable, Hashable, Sendable {
     }
 }
 
+public struct FileCapabilities: Codable, Equatable, Hashable, Sendable {
+    public var canAddChildren: Bool?
+
+    public init(canAddChildren: Bool? = nil) {
+        self.canAddChildren = canAddChildren
+    }
+}
+
 public struct DriveFile: Identifiable, Equatable, Hashable, Sendable {
     public var id: String
     public var name: String
@@ -53,6 +61,7 @@ public struct DriveFile: Identifiable, Equatable, Hashable, Sendable {
     public var md5Checksum: String?
     public var driveId: String?
     public var shortcutDetails: ShortcutDetails?
+    public var capabilities: FileCapabilities?
 
     public init(
         id: String,
@@ -70,7 +79,8 @@ public struct DriveFile: Identifiable, Equatable, Hashable, Sendable {
         owners: [DriveUser] = [],
         md5Checksum: String? = nil,
         driveId: String? = nil,
-        shortcutDetails: ShortcutDetails? = nil
+        shortcutDetails: ShortcutDetails? = nil,
+        capabilities: FileCapabilities? = nil
     ) {
         self.id = id
         self.name = name
@@ -88,6 +98,7 @@ public struct DriveFile: Identifiable, Equatable, Hashable, Sendable {
         self.md5Checksum = md5Checksum
         self.driveId = driveId
         self.shortcutDetails = shortcutDetails
+        self.capabilities = capabilities
     }
 
     public var isFolder: Bool { mimeType == DriveMime.folder }
@@ -122,7 +133,7 @@ public struct DriveFile: Identifiable, Equatable, Hashable, Sendable {
 extension DriveFile: Codable {
     private enum CodingKeys: String, CodingKey {
         case id, name, mimeType, modifiedTime, viewedByMeTime, size, starred, trashed, parents
-        case webViewLink, iconLink, thumbnailLink, owners, md5Checksum, driveId, shortcutDetails
+        case webViewLink, iconLink, thumbnailLink, owners, md5Checksum, driveId, shortcutDetails, capabilities
     }
 
     public init(from decoder: Decoder) throws {
@@ -143,6 +154,7 @@ extension DriveFile: Codable {
         md5Checksum = try container.decodeIfPresent(String.self, forKey: .md5Checksum)
         driveId = try container.decodeIfPresent(String.self, forKey: .driveId)
         shortcutDetails = try container.decodeIfPresent(ShortcutDetails.self, forKey: .shortcutDetails)
+        capabilities = try container.decodeIfPresent(FileCapabilities.self, forKey: .capabilities)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -163,6 +175,7 @@ extension DriveFile: Codable {
         try container.encodeIfPresent(md5Checksum, forKey: .md5Checksum)
         try container.encodeIfPresent(driveId, forKey: .driveId)
         try container.encodeIfPresent(shortcutDetails, forKey: .shortcutDetails)
+        try container.encodeIfPresent(capabilities, forKey: .capabilities)
     }
 }
 
@@ -215,6 +228,19 @@ public enum MimeType {
         case "mp3": return "audio/mpeg"
         case "csv": return "text/csv"
         case "html", "htm": return "text/html"
+        case "webp": return "image/webp"
+        case "svg": return "image/svg+xml"
+        case "tif", "tiff": return "image/tiff"
+        case "bmp": return "image/bmp"
+        case "heif": return "image/heif"
+        case "wav": return "audio/wav"
+        case "m4a": return "audio/mp4"
+        case "aac": return "audio/aac"
+        case "docx": return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        case "xlsx": return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        case "pptx": return "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+        case "rtf": return "application/rtf"
+        case "gz": return "application/gzip"
         default: return "application/octet-stream"
         }
     }

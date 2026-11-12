@@ -62,7 +62,15 @@ final class TransferCenter: ObservableObject {
     }
 
     @discardableResult
-    func upload(fileURL: URL, name: String, mimeType: String, parentID: String, accountID: String, client: DriveClient) async throws -> DriveFile {
+    func upload(
+        fileURL: URL,
+        name: String,
+        mimeType: String,
+        parentID: String,
+        accountID: String,
+        client: DriveClient,
+        strategy: UploadStrategy = .resumable
+    ) async throws -> DriveFile {
         try await run(
             name: name,
             accountID: accountID,
@@ -70,7 +78,7 @@ final class TransferCenter: ObservableObject {
             total: Self.fileSize(fileURL),
             reveal: true
         ) { [self] id in
-            try await client.uploadFile(at: fileURL, name: name, mimeType: mimeType, parentID: parentID) { [self] bytes, total in
+            try await client.uploadFile(at: fileURL, name: name, mimeType: mimeType, parentID: parentID, strategy: strategy) { [self] bytes, total in
                 Task { @MainActor [self] in
                     self.update(id, bytes: bytes, total: total)
                 }

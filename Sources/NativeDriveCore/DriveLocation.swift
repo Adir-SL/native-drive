@@ -32,10 +32,12 @@ public enum DriveRoot: Hashable, Codable, Sendable {
 public struct PathFolder: Hashable, Codable, Sendable, Identifiable {
     public var id: String
     public var name: String
+    public var canAddChildren: Bool?
 
-    public init(id: String, name: String) {
+    public init(id: String, name: String, canAddChildren: Bool? = nil) {
         self.id = id
         self.name = name
+        self.canAddChildren = canAddChildren
     }
 }
 

@@ -51,6 +51,7 @@ enum KeyRouting {
         if browser.mediaSession != nil {
             return browser.mediaSession?.handleKey(event) ?? false
         }
+        if browser.renamingID != nil { return false }
         guard let window = event.window, window.isKeyWindow, !window.isSheet else { return false }
         if window.firstResponder is NSTextView { return false }
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.capsLock, .numericPad, .function])
@@ -64,6 +65,10 @@ enum KeyRouting {
         }
         if flags.isEmpty && event.keyCode == 49 {
             browser.quickLookSelection()
+            return true
+        }
+        if flags == [.command, .shift] && event.keyCode == 45 {
+            browser.makeNew(.folder)
             return true
         }
         return false

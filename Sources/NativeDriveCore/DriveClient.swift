@@ -1,7 +1,7 @@
 import Foundation
 
 public enum DriveFields {
-    public static let file = "id,name,mimeType,modifiedTime,viewedByMeTime,size,starred,trashed,parents,webViewLink,thumbnailLink,owners(displayName,me),md5Checksum,driveId,shortcutDetails(targetId,targetMimeType)"
+    public static let file = "id,name,mimeType,modifiedTime,viewedByMeTime,size,starred,trashed,parents,webViewLink,thumbnailLink,owners(displayName,me),md5Checksum,driveId,shortcutDetails(targetId,targetMimeType),capabilities(canAddChildren)"
     public static let fileList = "files(\(file)),nextPageToken"
     public static let changeList = "changes(fileId,removed,file(\(file))),nextPageToken,newStartPageToken"
 }
@@ -231,15 +231,31 @@ public struct DriveClient: Sendable {
         }
     }
 
+    public func createFile(name: String, mimeType: String, parentID: String) async throws -> DriveFile {
+        let body = try NewItem.requestBody(name: name, mimeType: mimeType, parentID: parentID)
+        let response = try await perform { token in
+            var headers = self.bearer(token)
+            headers["Content-Type"] = "application/json"
+            return HTTPRequest(
+                method: "POST",
+                url: try self.endpoint("/drive/v3/files", query: NewItem.queryItems()),
+                headers: headers,
+                body: body
+            )
+        }
+        return try decode(DriveFile.self, from: response.body)
+    }
+
     public func uploadFile(
         at fileURL: URL,
         name: String,
         mimeType: String,
         parentID: String,
+        strategy: UploadStrategy = .automatic,
         onProgress: @escaping @Sendable (Int64, Int64) -> Void
     ) async throws -> DriveFile {
         let size = try fileSize(fileURL)
-        if size >= uploadLimits.resumableThreshold {
+        if strategy == .resumable || size >= uploadLimits.resumableThreshold {
             return try await resumableUpload(fileURL: fileURL, name: name, mimeType: mimeType, parentID: parentID, size: size, onProgress: onProgress)
         }
         return try await multipartUpload(fileURL: fileURL, name: name, mimeType: mimeType, parentID: parentID, onProgress: onProgress)
@@ -327,18 +343,23 @@ public struct DriveClient: Sendable {
         var offset: Int64 = 0
         onProgress(0, size)
         while offset < size {
-            let length = min(Int64(max(uploadLimits.chunkSize, 1)), size - offset)
-            try handle.seek(toOffset: UInt64(offset))
-            let chunk = handle.readData(ofLength: Int(length))
+            guard let planned = UploadChunker.chunk(from: offset, fileSize: size, chunkSize: uploadLimits.chunkSize) else {
+                break
+            }
+            try handle.seek(toOffset: UInt64(planned.start))
+            let chunk = handle.readData(ofLength: Int(planned.end - planned.start + 1))
             if chunk.isEmpty {
                 throw DriveAPIError.transport("The file ended before the upload finished.")
             }
-            let end = offset + Int64(chunk.count) - 1
-            let chunkStart = offset
+            let contentRange = UploadChunk(
+                start: planned.start,
+                end: planned.start + Int64(chunk.count) - 1,
+                total: size
+            ).contentRange
             let response = try await sendAllowing([200, 201, 308]) { token in
                 var headers = self.bearer(token)
                 headers["Content-Type"] = mimeType
-                headers["Content-Range"] = "bytes \(chunkStart)-\(end)/\(size)"
+                headers["Content-Range"] = contentRange
                 return HTTPRequest(method: "PUT", url: sessionURL, headers: headers, body: chunk, timeout: 60 * 30)
             }
             if (200..<300).contains(response.status) {

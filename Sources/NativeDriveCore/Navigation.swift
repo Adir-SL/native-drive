@@ -19,9 +19,9 @@ public struct BrowserNavigation: Equatable, Sendable {
         path = next
     }
 
-    public mutating func openFolder(id: String, name: String) {
+    public mutating func openFolder(id: String, name: String, canAddChildren: Bool? = nil) {
         pushCurrent()
-        path.folders.append(PathFolder(id: id, name: name))
+        path.folders.append(PathFolder(id: id, name: name, canAddChildren: canAddChildren))
     }
 
     public mutating func replace(path next: BrowsePath) {

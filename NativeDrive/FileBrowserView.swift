@@ -24,6 +24,11 @@ struct FileBrowserView: View {
             Divider()
             table
         }
+        .contextMenu {
+            if browser.creationDeniedReason == nil {
+                NewItemMenu(browser: browser)
+            }
+        }
         .dropDestination(for: URL.self) { urls, _ in
             browser.upload(urls: urls, parentID: browser.currentLocation.uploadParentID)
             return true
@@ -89,15 +94,19 @@ struct FileBrowserView: View {
                 TableColumn("Name") { file in
                     HStack(spacing: 8) {
                         RowThumbnail(file: file, browser: browser)
-                        Text(file.name)
-                            .lineLimit(1)
+                        if browser.renamingID == file.id {
+                            InlineNameField(browser: browser)
+                        } else {
+                            Text(file.name)
+                                .lineLimit(1)
+                        }
                     }
                     .onTapGesture(count: 2) { Task { await browser.open(file) } }
                     .onHover { browser.hover(file, inside: $0) }
                     .contextMenu { contextMenu(for: file) }
                     .onDrag { browser.dragProvider(for: file) }
                     .dropDestination(for: URL.self) { urls, _ in
-                        guard file.isFolder else { return false }
+                        guard file.isFolder, file.capabilities?.canAddChildren != false else { return false }
                         browser.upload(urls: urls, parentID: file.id)
                         return true
                     }
@@ -193,6 +202,39 @@ private struct RowThumbnail: View {
             guard MediaClassifier.kind(of: file) == .image else { return }
             image = await browser.thumbnail(for: file, edge: ThumbnailPlan.rowEdge)
         }
+    }
+}
+
+struct NewItemMenu: View {
+    @ObservedObject var browser: BrowserModel
+
+    var body: some View {
+        Button("New Folder") { browser.makeNew(.folder) }
+        Divider()
+        Button("Google Docs") { browser.makeNew(.document) }
+        Button("Google Sheets") { browser.makeNew(.spreadsheet) }
+        Button("Google Slides") { browser.makeNew(.presentation) }
+        Button("Google Forms") { browser.makeNew(.form) }
+        Button("Google Drawings") { browser.makeNew(.drawing) }
+        Divider()
+        Button("File upload…") { browser.chooseFilesToUpload() }
+        Button("Folder upload…") { browser.chooseFoldersToUpload() }
+    }
+}
+
+private struct InlineNameField: View {
+    @ObservedObject var browser: BrowserModel
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        TextField("Name", text: Binding(
+            get: { browser.renameDraft },
+            set: { browser.renameDraft = $0 }
+        ))
+        .focused($focused)
+        .onSubmit { browser.commitInlineRename() }
+        .onExitCommand { browser.cancelInlineRename() }
+        .onAppear { focused = true }
     }
 }
 

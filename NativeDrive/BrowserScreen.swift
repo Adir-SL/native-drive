@@ -75,6 +75,13 @@ struct BrowserScreen: View {
             AccountMenu()
         }
         ToolbarItemGroup(placement: .primaryAction) {
+            Menu {
+                NewItemMenu(browser: browser)
+            } label: {
+                Label("New", systemImage: "plus")
+            }
+            .disabled(browser.creationDeniedReason != nil)
+            .help(browser.creationDeniedReason ?? "New")
             if browser.isRefreshing {
                 ProgressView()
                     .controlSize(.small)
