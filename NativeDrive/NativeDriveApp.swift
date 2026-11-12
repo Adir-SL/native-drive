@@ -31,6 +31,7 @@ struct NativeDriveCommands: Commands {
     @AppStorage(BrowserPreference.showPath) private var showPath = true
     @AppStorage(BrowserPreference.showStatus) private var showStatus = true
     @AppStorage(BrowserPreference.useGroups) private var useGroups = false
+    @AppStorage(BrowserPreference.showSharedBadges) private var showSharedBadges = true
     @ObservedObject private var sorts = FolderSortStore.shared
 
     private var folderKey: String { model.browser?.currentLocation.cacheKey ?? "myDrive" }
@@ -91,6 +92,7 @@ struct NativeDriveCommands: Commands {
             Toggle("Folder Colors", isOn: $folderColors)
             Toggle("Show Folders First", isOn: $foldersFirst)
             Toggle("Use Groups", isOn: $useGroups)
+            Toggle("Show Shared Badges", isOn: $showSharedBadges)
             Divider()
             Menu("Sort By") {
                 ForEach(FileSortKey.allCases) { key in

@@ -1,5 +1,12 @@
 import Foundation
 
+public enum SharedItem {
+    /// `shared` is Drive's own flag. `ownedByMe == false` covers files that belong to someone else even when `shared` is omitted.
+    public static func isShared(shared: Bool?, ownedByMe: Bool?) -> Bool {
+        shared == true || ownedByMe == false
+    }
+}
+
 public enum FolderColor {
     /// `#RGB`, `#RRGGBB`, or the same without a hash. Invalid strings are ignored.
     public static func components(_ raw: String?) -> (red: Double, green: Double, blue: Double)? {

@@ -58,6 +58,7 @@ enum BrowserPreference {
     static let showPath = "browser.showPath"
     static let showStatus = "browser.showStatus"
     static let useGroups = "browser.useGroups"
+    static let showSharedBadges = "browser.showSharedBadges"
     static let iconSize = "browser.iconSize"
     static let folderSorts = "browser.folderSorts"
 }
@@ -98,6 +99,7 @@ struct SettingsView: View {
     @AppStorage(BrowserPreference.showPath) private var showPath = true
     @AppStorage(BrowserPreference.showStatus) private var showStatus = true
     @AppStorage(BrowserPreference.useGroups) private var useGroups = false
+    @AppStorage(BrowserPreference.showSharedBadges) private var showSharedBadges = true
     @AppStorage(BrowserPreference.iconSize) private var iconSize = 72.0
 
     var body: some View {
@@ -115,11 +117,12 @@ struct SettingsView: View {
             Toggle("Video previews", isOn: $videoPreviews)
             Toggle("Show folders first", isOn: $foldersFirst)
             Toggle("Use groups", isOn: $useGroups)
+            Toggle("Show shared badges", isOn: $showSharedBadges)
             Toggle("Show path bar", isOn: $showPath)
             Toggle("Show status bar", isOn: $showStatus)
         }
         .formStyle(.grouped)
-        .frame(width: 440, height: 360)
+        .frame(width: 440, height: 400)
     }
 }
 
@@ -526,6 +529,7 @@ struct FileGlyph: View {
     @ObservedObject var browser: BrowserModel
     var side: CGFloat
     var folderColors: Bool
+    @AppStorage(BrowserPreference.showSharedBadges) private var showSharedBadges = true
     @State private var image: NSImage?
 
     var body: some View {
@@ -542,11 +546,31 @@ struct FileGlyph: View {
         }
         .frame(width: side, height: side)
         .clipShape(RoundedRectangle(cornerRadius: side > 40 ? 6 : 2))
+        .overlay(alignment: .bottomTrailing) {
+            if showSharedBadges, file.showsAsShared {
+                SharedBadge(side: side)
+            }
+        }
         .task(id: file.id) {
             guard !file.isFolder else { return }
             guard MediaClassifier.kind(of: file) == .image || side > 40 else { return }
             image = await browser.thumbnail(for: file, edge: max(Int(side * 2), ThumbnailPlan.rowEdge))
         }
+    }
+}
+
+struct SharedBadge: View {
+    var side: CGFloat
+
+    var body: some View {
+        let diameter = min(max(side * 0.42, 8), 18)
+        Image(systemName: "person.2.fill")
+            .font(.system(size: diameter * 0.55, weight: .semibold))
+            .foregroundStyle(.white)
+            .frame(width: diameter, height: diameter)
+            .background(Circle().fill(Color.accentColor))
+            .overlay(Circle().strokeBorder(.background, lineWidth: 1))
+            .help("Shared")
     }
 }
 

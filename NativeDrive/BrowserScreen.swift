@@ -170,6 +170,7 @@ struct AccountMenu: View {
 struct SidebarView: View {
     @EnvironmentObject private var model: AppModel
     @ObservedObject var browser: BrowserModel
+    @AppStorage(BrowserPreference.showSharedBadges) private var showSharedBadges = true
 
     var body: some View {
         VStack(spacing: 0) {
@@ -190,8 +191,17 @@ struct SidebarView: View {
                             .foregroundStyle(.secondary)
                     } else {
                         ForEach(browser.sharedDrives) { drive in
-                            Label(drive.name, systemImage: "externaldrive")
-                                .tag(DriveRoot.sharedDrive(id: drive.id, name: drive.name))
+                            Label {
+                                Text(drive.name)
+                            } icon: {
+                                Image(systemName: "externaldrive")
+                                    .overlay(alignment: .bottomTrailing) {
+                                        if showSharedBadges {
+                                            SharedBadge(side: 16)
+                                        }
+                                    }
+                            }
+                            .tag(DriveRoot.sharedDrive(id: drive.id, name: drive.name))
                         }
                     }
                 }

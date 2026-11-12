@@ -2,9 +2,9 @@ import Foundation
 
 public enum DriveFields {
     /// Fields for `files.list`. Sharing metadata is omitted: requesting it on every row makes Drive return a short page and drop the rest.
-    public static let listItem = "id,name,mimeType,modifiedTime,viewedByMeTime,size,starred,trashed,parents,webViewLink,thumbnailLink,folderColorRgb,owners(displayName,me),md5Checksum,driveId,shortcutDetails(targetId,targetMimeType),capabilities(canAddChildren)"
+    public static let listItem = "id,name,mimeType,modifiedTime,viewedByMeTime,size,starred,trashed,parents,webViewLink,thumbnailLink,folderColorRgb,shared,ownedByMe,owners(displayName,me),md5Checksum,driveId,shortcutDetails(targetId,targetMimeType),capabilities(canAddChildren)"
     /// Single-file reads and updates. Includes the sharing flags the Share sheet needs.
-    public static let file = "id,name,mimeType,modifiedTime,viewedByMeTime,size,starred,trashed,parents,webViewLink,thumbnailLink,owners(displayName,me),md5Checksum,driveId,shortcutDetails(targetId,targetMimeType),writersCanShare,copyRequiresWriterPermission,capabilities(canAddChildren,canShare,canChangeCopyRequiresWriterPermission,canChangeViewersCanCopyContent),imageMediaMetadata(width,height),videoMediaMetadata(width,height,durationMillis)"
+    public static let file = "id,name,mimeType,modifiedTime,viewedByMeTime,size,starred,trashed,parents,webViewLink,thumbnailLink,shared,ownedByMe,owners(displayName,me),md5Checksum,driveId,shortcutDetails(targetId,targetMimeType),writersCanShare,copyRequiresWriterPermission,capabilities(canAddChildren,canShare,canChangeCopyRequiresWriterPermission,canChangeViewersCanCopyContent),imageMediaMetadata(width,height),videoMediaMetadata(width,height,durationMillis)"
     public static let fileList = "files(\(listItem)),nextPageToken"
     public static let changeList = "changes(fileId,removed,file(\(listItem))),nextPageToken,newStartPageToken"
 }

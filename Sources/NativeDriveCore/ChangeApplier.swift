@@ -1,8 +1,8 @@
 import Foundation
 
 public enum ListingCacheVersion {
-    /// Bumped when a files.list field mask made Drive return a short page that was then saved as the whole folder.
-    public static let current = 3
+    /// Bumped when stored listings lack fields the browser now shows, and earlier when a wide files.list mask truncated pages.
+    public static let current = 4
 }
 
 public struct CachedListing: Equatable, Sendable {

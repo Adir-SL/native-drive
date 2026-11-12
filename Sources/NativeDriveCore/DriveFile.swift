@@ -101,6 +101,8 @@ public struct DriveFile: Identifiable, Equatable, Hashable, Sendable {
     public var iconLink: String?
     public var thumbnailLink: String?
     public var folderColorRgb: String?
+    public var shared: Bool?
+    public var ownedByMe: Bool?
     public var owners: [DriveUser]
     public var md5Checksum: String?
     public var driveId: String?
@@ -126,6 +128,8 @@ public struct DriveFile: Identifiable, Equatable, Hashable, Sendable {
         iconLink: String? = nil,
         thumbnailLink: String? = nil,
         folderColorRgb: String? = nil,
+        shared: Bool? = nil,
+        ownedByMe: Bool? = nil,
         owners: [DriveUser] = [],
         md5Checksum: String? = nil,
         driveId: String? = nil,
@@ -150,6 +154,8 @@ public struct DriveFile: Identifiable, Equatable, Hashable, Sendable {
         self.iconLink = iconLink
         self.thumbnailLink = thumbnailLink
         self.folderColorRgb = folderColorRgb
+        self.shared = shared
+        self.ownedByMe = ownedByMe
         self.owners = owners
         self.md5Checksum = md5Checksum
         self.driveId = driveId
@@ -160,6 +166,11 @@ public struct DriveFile: Identifiable, Equatable, Hashable, Sendable {
         self.pixelWidth = pixelWidth
         self.pixelHeight = pixelHeight
         self.durationMillis = durationMillis
+    }
+
+    /// Shared with someone else, or present in this account without the user owning it.
+    public var showsAsShared: Bool {
+        SharedItem.isShared(shared: shared, ownedByMe: ownedByMe)
     }
 
     public var isFolder: Bool { mimeType == DriveMime.folder }
@@ -194,7 +205,7 @@ public struct DriveFile: Identifiable, Equatable, Hashable, Sendable {
 extension DriveFile: Codable {
     private enum CodingKeys: String, CodingKey {
         case id, name, mimeType, modifiedTime, viewedByMeTime, size, starred, trashed, parents
-        case webViewLink, iconLink, thumbnailLink, folderColorRgb, owners, md5Checksum, driveId, shortcutDetails, capabilities
+        case webViewLink, iconLink, thumbnailLink, folderColorRgb, shared, ownedByMe, owners, md5Checksum, driveId, shortcutDetails, capabilities
         case writersCanShare, copyRequiresWriterPermission
         case imageMediaMetadata, videoMediaMetadata
     }
@@ -256,6 +267,8 @@ extension DriveFile: Codable {
         iconLink = try container.decodeIfPresent(String.self, forKey: .iconLink)
         thumbnailLink = try container.decodeIfPresent(String.self, forKey: .thumbnailLink)
         folderColorRgb = try container.decodeIfPresent(String.self, forKey: .folderColorRgb)
+        shared = try container.decodeIfPresent(Bool.self, forKey: .shared)
+        ownedByMe = try container.decodeIfPresent(Bool.self, forKey: .ownedByMe)
         owners = try container.decodeIfPresent([DriveUser].self, forKey: .owners) ?? []
         md5Checksum = try container.decodeIfPresent(String.self, forKey: .md5Checksum)
         driveId = try container.decodeIfPresent(String.self, forKey: .driveId)
@@ -285,6 +298,8 @@ extension DriveFile: Codable {
         try container.encodeIfPresent(iconLink, forKey: .iconLink)
         try container.encodeIfPresent(thumbnailLink, forKey: .thumbnailLink)
         try container.encodeIfPresent(folderColorRgb, forKey: .folderColorRgb)
+        try container.encodeIfPresent(shared, forKey: .shared)
+        try container.encodeIfPresent(ownedByMe, forKey: .ownedByMe)
         try container.encode(owners, forKey: .owners)
         try container.encodeIfPresent(md5Checksum, forKey: .md5Checksum)
         try container.encodeIfPresent(driveId, forKey: .driveId)
