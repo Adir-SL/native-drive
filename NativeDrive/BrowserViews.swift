@@ -39,12 +39,15 @@ enum BrowserViewMode: String, CaseIterable, Identifiable {
         }
     }
 
+    /// View menu order. Column view stays on the toolbar and in Settings.
+    static let menuOrder: [BrowserViewMode] = [.icon, .list, .gallery]
+
     var shortcut: KeyEquivalent {
         switch self {
         case .icon: return "1"
         case .list: return "2"
-        case .column: return "3"
-        case .gallery: return "4"
+        case .gallery: return "3"
+        case .column: return "4"
         }
     }
 }
@@ -535,17 +538,17 @@ struct FileGlyph: View {
     var body: some View {
         Group {
             if file.isFolder {
-                Image(nsImage: FolderIconImage.make(hex: file.folderColorRgb, enabled: folderColors))
-                    .resizable()
-                    .scaledToFit()
+                FolderIcon(hex: file.folderColorRgb, enabled: folderColors)
             } else if let image {
-                Image(nsImage: image).resizable().scaledToFill()
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .clipShape(RoundedRectangle(cornerRadius: side > 40 ? 6 : 2))
             } else {
                 FileTypeIcon(file: file)
             }
         }
         .frame(width: side, height: side)
-        .clipShape(RoundedRectangle(cornerRadius: side > 40 ? 6 : 2))
         .overlay(alignment: .bottomTrailing) {
             if showSharedBadges, file.showsAsShared {
                 SharedBadge(side: side)
@@ -574,21 +577,22 @@ struct SharedBadge: View {
     }
 }
 
-enum FolderIconImage {
-    private static let cache = NSCache<NSString, NSImage>()
+struct FolderIcon: View {
+    var hex: String?
+    var enabled: Bool
 
-    static func make(hex: String?, enabled: Bool) -> NSImage {
-        let base = NSWorkspace.shared.icon(for: .folder)
-        guard enabled, let color = FolderColor.components(hex), let hex else { return base }
-        if let cached = cache.object(forKey: hex as NSString) { return cached }
-        let tinted = NSImage(size: base.size)
-        tinted.lockFocus()
-        base.draw(in: NSRect(origin: .zero, size: base.size))
-        NSColor(calibratedRed: color.red, green: color.green, blue: color.blue, alpha: 0.45).set()
-        NSRect(origin: .zero, size: base.size).fill(using: .sourceAtop)
-        tinted.unlockFocus()
-        cache.setObject(tinted, forKey: hex as NSString)
-        return tinted
+    var body: some View {
+        if enabled, let color = FolderColor.components(hex) {
+            Image(systemName: "folder.fill")
+                .resizable()
+                .scaledToFit()
+                .symbolRenderingMode(.monochrome)
+                .foregroundStyle(Color(.sRGB, red: color.red, green: color.green, blue: color.blue, opacity: 1))
+        } else {
+            Image(nsImage: NSWorkspace.shared.icon(for: .folder))
+                .resizable()
+                .scaledToFit()
+        }
     }
 }
 

@@ -39,7 +39,7 @@ struct NativeDriveCommands: Commands {
 
     @ViewBuilder
     private var viewModeButtons: some View {
-        ForEach(BrowserViewMode.allCases) { mode in
+        ForEach(BrowserViewMode.menuOrder) { mode in
             Toggle(mode.title, isOn: Binding(
                 get: { viewMode == mode.rawValue },
                 set: { if $0 { viewMode = mode.rawValue } }
