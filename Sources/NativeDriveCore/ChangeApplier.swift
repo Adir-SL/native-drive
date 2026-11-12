@@ -1,8 +1,8 @@
 import Foundation
 
 public enum ListingCacheVersion {
-    /// Bumped when saved listings could be a single page mistaken for the whole folder.
-    public static let current = 2
+    /// Bumped when a files.list field mask made Drive return a short page that was then saved as the whole folder.
+    public static let current = 3
 }
 
 public struct CachedListing: Equatable, Sendable {

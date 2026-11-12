@@ -1,9 +1,12 @@
 import Foundation
 
 public enum DriveFields {
+    /// Fields for `files.list`. Sharing metadata is omitted: requesting it on every row makes Drive return a short page and drop the rest.
+    public static let listItem = "id,name,mimeType,modifiedTime,viewedByMeTime,size,starred,trashed,parents,webViewLink,thumbnailLink,owners(displayName,me),md5Checksum,driveId,shortcutDetails(targetId,targetMimeType),capabilities(canAddChildren)"
+    /// Single-file reads and updates. Includes the sharing flags the Share sheet needs.
     public static let file = "id,name,mimeType,modifiedTime,viewedByMeTime,size,starred,trashed,parents,webViewLink,thumbnailLink,owners(displayName,me),md5Checksum,driveId,shortcutDetails(targetId,targetMimeType),writersCanShare,copyRequiresWriterPermission,capabilities(canAddChildren,canShare,canChangeCopyRequiresWriterPermission,canChangeViewersCanCopyContent)"
-    public static let fileList = "files(\(file)),nextPageToken"
-    public static let changeList = "changes(fileId,removed,file(\(file))),nextPageToken,newStartPageToken"
+    public static let fileList = "files(\(listItem)),nextPageToken"
+    public static let changeList = "changes(fileId,removed,file(\(listItem))),nextPageToken,newStartPageToken"
 }
 
 public struct FilePage: Equatable, Sendable {
@@ -31,7 +34,7 @@ public struct DriveChange: Codable, Equatable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         fileId = try container.decode(String.self, forKey: .fileId)
         removed = try container.decodeIfPresent(Bool.self, forKey: .removed) ?? false
-        file = try container.decodeIfPresent(DriveFile.self, forKey: .file)
+        file = try container.decodeIfPresent(LossyDriveFile.self, forKey: .file)?.file
     }
 }
 
@@ -89,7 +92,7 @@ public struct DriveClient: Sendable {
         let response = try await perform { token in
             HTTPRequest(method: "GET", url: try self.endpoint("/drive/v3/files", query: items), headers: self.bearer(token))
         }
-        return try decode(FilePagePayload.self, from: response.body).page
+        return try DriveFilePage.decode(response.body)
     }
 
     public func getFile(id: String) async throws -> DriveFile {
@@ -730,23 +733,6 @@ private struct PermissionListPayload: Decodable {
 
     private enum CodingKeys: String, CodingKey {
         case permissions, nextPageToken
-    }
-}
-
-private struct FilePagePayload: Decodable {
-    var files: [DriveFile]
-    var nextPageToken: String?
-
-    var page: FilePage { FilePage(files: files, nextPageToken: nextPageToken) }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        files = try container.decodeIfPresent([DriveFile].self, forKey: .files) ?? []
-        nextPageToken = try container.decodeIfPresent(String.self, forKey: .nextPageToken)
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case files, nextPageToken
     }
 }
 

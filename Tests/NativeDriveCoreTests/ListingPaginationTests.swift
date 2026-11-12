@@ -104,6 +104,29 @@ final class ListingPaginationTests: XCTestCase {
         XCTAssertNil(ignored)
     }
 
+    func testSharingFieldsStayOffTheFolderListAndABadRowDoesNotDropThePage() throws {
+        XCTAssertFalse(DriveFields.fileList.contains("writersCanShare"))
+        XCTAssertFalse(DriveFields.fileList.contains("copyRequiresWriterPermission"))
+        XCTAssertFalse(DriveFields.fileList.contains("canShare"))
+        XCTAssertTrue(DriveFields.fileList.contains("capabilities(canAddChildren)"))
+        XCTAssertTrue(DriveFields.fileList.contains("nextPageToken"))
+        XCTAssertTrue(DriveFields.file.contains("writersCanShare"))
+        XCTAssertTrue(DriveFields.file.contains("canShare"))
+
+        let json = """
+        {"nextPageToken":"page-2","files":[
+          {"id":"reports","name":"Reports","mimeType":"application/vnd.google-apps.folder"},
+          {"id":1,"name":"Broken"},
+          {"id":"shortcut","name":"Linked","mimeType":"application/vnd.google-apps.shortcut","shortcutDetails":{"targetMimeType":"application/vnd.google-apps.folder"}},
+          {"id":"photos","name":"Photos","mimeType":"application/vnd.google-apps.folder","capabilities":{"canAddChildren":false}}
+        ]}
+        """
+        let page = try DriveFilePage.decode(Data(json.utf8))
+        XCTAssertEqual(page.nextPageToken, "page-2")
+        XCTAssertEqual(page.files.map(\.id), ["reports", "shortcut", "photos"])
+        XCTAssertEqual(page.files.first { $0.id == "photos" }?.capabilities?.canAddChildren, false)
+    }
+
     func testListRequestKeepsTheNextPageTokenAndDoesNotHideShortcuts() throws {
         let query = DriveQueryBuilder.filesList(for: .folder(id: "parent", name: "Parent", sharedDriveID: nil), pageToken: "page-2")
         XCTAssertEqual(query.q, "'parent' in parents and trashed = false")

@@ -27,12 +27,44 @@ public struct DriveUser: Codable, Equatable, Hashable, Sendable {
 }
 
 public struct ShortcutDetails: Codable, Equatable, Hashable, Sendable {
-    public var targetId: String
+    public var targetId: String?
     public var targetMimeType: String?
 
-    public init(targetId: String, targetMimeType: String? = nil) {
+    public init(targetId: String? = nil, targetMimeType: String? = nil) {
         self.targetId = targetId
         self.targetMimeType = targetMimeType
+    }
+}
+
+struct LossyDriveFile: Decodable {
+    var file: DriveFile?
+
+    init(from decoder: Decoder) throws {
+        file = try? DriveFile(from: decoder)
+    }
+}
+
+public enum DriveFilePage {
+    /// Decodes a files.list body. One file that cannot be read is skipped so the rest of the page, including its folders, stays.
+    public static func decode(_ data: Data) throws -> FilePage {
+        let page = try JSONCoders.makeDecoder().decode(LossyFilePage.self, from: data)
+        return FilePage(files: page.files, nextPageToken: ListingPageToken.normalized(page.nextPageToken))
+    }
+}
+
+private struct LossyFilePage: Decodable {
+    var files: [DriveFile]
+    var nextPageToken: String?
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let rows = try container.decodeIfPresent([LossyDriveFile].self, forKey: .files) ?? []
+        files = rows.compactMap(\.file)
+        nextPageToken = try container.decodeIfPresent(String.self, forKey: .nextPageToken)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case files, nextPageToken
     }
 }
 
