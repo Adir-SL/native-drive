@@ -12,7 +12,10 @@ public actor DriveCache {
         let url = listingURL(accountID: accountID, key: key)
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
         let data = try Data(contentsOf: url)
-        return try? JSONCoders.makeDecoder().decode(CachedListing.self, from: data)
+        guard let listing = try? JSONCoders.makeDecoder().decode(CachedListing.self, from: data), listing.isCurrent else {
+            return nil
+        }
+        return listing
     }
 
     public func saveListing(accountID: String, listing: CachedListing) throws {
@@ -89,6 +92,7 @@ public actor DriveCache {
                   let listing = try? JSONCoders.makeDecoder().decode(CachedListing.self, from: data) else {
                 continue
             }
+            guard listing.isCurrent else { continue }
             listings[listing.key] = listing
         }
         return listings

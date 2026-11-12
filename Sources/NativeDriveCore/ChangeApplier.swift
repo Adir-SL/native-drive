@@ -1,16 +1,112 @@
 import Foundation
 
-public struct CachedListing: Codable, Equatable, Sendable {
+public enum ListingCacheVersion {
+    /// Bumped when saved listings could be a single page mistaken for the whole folder.
+    public static let current = 2
+}
+
+public struct CachedListing: Equatable, Sendable {
     public var key: String
     public var files: [DriveFile]
     public var nextPageToken: String?
     public var fetchedAt: Date
+    public var version: Int
 
-    public init(key: String, files: [DriveFile], nextPageToken: String?, fetchedAt: Date) {
+    public init(key: String, files: [DriveFile], nextPageToken: String?, fetchedAt: Date, version: Int = ListingCacheVersion.current) {
         self.key = key
         self.files = files
-        self.nextPageToken = nextPageToken
+        self.nextPageToken = ListingPageToken.normalized(nextPageToken)
         self.fetchedAt = fetchedAt
+        self.version = version
+    }
+
+    /// A listing with no further page token. Older versions are not trusted; they may be truncated.
+    public var isComplete: Bool {
+        nextPageToken == nil && version >= ListingCacheVersion.current
+    }
+
+    public var isCurrent: Bool {
+        version >= ListingCacheVersion.current
+    }
+}
+
+extension CachedListing: Codable {
+    private enum CodingKeys: String, CodingKey {
+        case key, files, nextPageToken, fetchedAt, version
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        key = try container.decode(String.self, forKey: .key)
+        files = try container.decodeIfPresent([DriveFile].self, forKey: .files) ?? []
+        nextPageToken = ListingPageToken.normalized(try container.decodeIfPresent(String.self, forKey: .nextPageToken))
+        fetchedAt = try container.decodeIfPresent(Date.self, forKey: .fetchedAt) ?? .distantPast
+        version = try container.decodeIfPresent(Int.self, forKey: .version) ?? 0
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(key, forKey: .key)
+        try container.encode(files, forKey: .files)
+        try container.encodeIfPresent(nextPageToken, forKey: .nextPageToken)
+        try container.encode(fetchedAt, forKey: .fetchedAt)
+        try container.encode(version, forKey: .version)
+    }
+}
+
+public enum ListingPageToken {
+    public static func normalized(_ token: String?) -> String? {
+        guard let token else { return nil }
+        let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+}
+
+public enum ListingWalk {
+    /// Merge every page. The listing is complete only when the last page has no token.
+    public static func accumulate(pages: [FilePage], key: String, now: Date = Date()) -> CachedListing {
+        var files: [DriveFile] = []
+        var token: String?
+        for page in pages {
+            files = ListingRefresh.mergePage(existing: files, page: page.files, key: key)
+            token = ListingPageToken.normalized(page.nextPageToken)
+        }
+        return CachedListing(key: key, files: files, nextPageToken: token, fetchedAt: now)
+    }
+
+    /// Drop rows the server did not return only after every page arrived.
+    public static func finalize(
+        files: [DriveFile],
+        seen: Set<String>,
+        pinned: Set<String> = [],
+        key: String,
+        nextPageToken: String?,
+        failed: Bool,
+        now: Date = Date()
+    ) -> CachedListing? {
+        guard !failed, ListingPageToken.normalized(nextPageToken) == nil else { return nil }
+        let closed = ListingRefresh.droppingUnseen(files: files, seen: seen, pinned: pinned, key: key)
+        return CachedListing(key: key, files: closed, nextPageToken: nil, fetchedAt: now)
+    }
+}
+
+public enum ListingCacheWrite {
+    /// A one-page prefetch must not discard rows already stored from later pages.
+    public static func resolve(existing: CachedListing?, incoming: CachedListing) -> CachedListing {
+        var incoming = incoming
+        incoming.version = ListingCacheVersion.current
+        incoming.nextPageToken = ListingPageToken.normalized(incoming.nextPageToken)
+        guard let existing, existing.isCurrent, !incoming.isComplete, existing.files.count > incoming.files.count else {
+            return incoming
+        }
+        let merged = ListingRefresh.mergePage(existing: existing.files, page: incoming.files, key: existing.key)
+        return CachedListing(
+            key: existing.key,
+            files: merged,
+            nextPageToken: existing.nextPageToken,
+            fetchedAt: existing.fetchedAt,
+            version: ListingCacheVersion.current
+        )
     }
 }
 

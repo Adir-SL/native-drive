@@ -55,7 +55,7 @@ public enum DriveQueryBuilder {
         case .myDrive:
             return make(
                 q: "'root' in parents and trashed = false",
-                orderBy: "folder,name",
+                orderBy: "name",
                 pageToken: pageToken,
                 pageSize: clampedPageSize(pageSize),
                 corpora: "user",
@@ -64,13 +64,13 @@ public enum DriveQueryBuilder {
         case .folder(let id, _, let sharedDriveID):
             let query = "'\(escapeQueryLiteral(id))' in parents and trashed = false"
             if let sharedDriveID {
-                return make(q: query, orderBy: "folder,name", pageToken: pageToken, pageSize: pageSize, corpora: "drive", driveId: sharedDriveID)
+                return make(q: query, orderBy: "name", pageToken: pageToken, pageSize: pageSize, corpora: "drive", driveId: sharedDriveID)
             }
-            return make(q: query, orderBy: "folder,name", pageToken: pageToken, pageSize: pageSize, corpora: "user", driveId: nil)
+            return make(q: query, orderBy: "name", pageToken: pageToken, pageSize: pageSize, corpora: "user", driveId: nil)
         case .sharedWithMe:
             return make(
                 q: "sharedWithMe = true and trashed = false",
-                orderBy: "folder,name",
+                orderBy: "name",
                 pageToken: pageToken,
                 pageSize: clampedPageSize(pageSize),
                 corpora: "user",
@@ -88,7 +88,7 @@ public enum DriveQueryBuilder {
         case .starred:
             return make(
                 q: "starred = true and trashed = false",
-                orderBy: "folder,name",
+                orderBy: "name",
                 pageToken: pageToken,
                 pageSize: clampedPageSize(pageSize),
                 corpora: "allDrives",
@@ -105,7 +105,7 @@ public enum DriveQueryBuilder {
             )
         case .sharedDrive(let id, _):
             let query = "'\(escapeQueryLiteral(id))' in parents and trashed = false"
-            return make(q: query, orderBy: "folder,name", pageToken: pageToken, pageSize: pageSize, corpora: "drive", driveId: id)
+            return make(q: query, orderBy: "name", pageToken: pageToken, pageSize: pageSize, corpora: "drive", driveId: id)
         case .search(let text):
             let escaped = escapeQueryLiteral(text)
             let query = "(name contains '\(escaped)' or fullText contains '\(escaped)') and trashed = false"

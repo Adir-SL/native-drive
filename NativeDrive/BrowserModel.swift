@@ -764,14 +764,21 @@ final class BrowserModel: ObservableObject {
             guard generation == loadGeneration, !Task.isCancelled else { return }
             try await storePage(page, location: location, generation: generation, resetSeen: true)
             isOffline = false
-            await loadRemainingPages(location: location, generation: generation)
+            let failed = await loadRemainingPages(location: location, generation: generation)
             guard generation == loadGeneration else { return }
-            if let seen = seenThisLoad {
-                let closed = ListingRefresh.droppingUnseen(files: files, seen: seen, pinned: pinnedIDs, key: location.cacheKey)
-                let listing = CachedListing(key: location.cacheKey, files: closed, nextPageToken: nil, fetchedAt: Date())
-                memory.store(listing)
-                try? await cache.saveListing(accountID: accountID, listing: listing)
-                apply(listing)
+            if let seen = seenThisLoad,
+               let finished = ListingWalk.finalize(
+                files: files,
+                seen: seen,
+                pinned: pinnedIDs,
+                key: location.cacheKey,
+                nextPageToken: nextPageToken,
+                failed: failed
+               ) {
+                let stored = ListingCacheWrite.resolve(existing: memory.listing(for: location.cacheKey), incoming: finished)
+                memory.store(stored)
+                try? await cache.saveListing(accountID: accountID, listing: stored)
+                apply(stored)
             }
             seenThisLoad = nil
         } catch is CancellationError {
@@ -792,37 +799,47 @@ final class BrowserModel: ObservableObject {
     }
 
     private func loadMore() async {
-        await loadMore(location: currentLocation, generation: loadGeneration)
-    }
-
-    private func loadRemainingPages(location: DriveLocation, generation: Int) async {
-        while generation == loadGeneration, nextPageToken != nil, !Task.isCancelled {
-            let before = nextPageToken
-            await loadMore(location: location, generation: generation)
-            if nextPageToken == before { break }
-        }
-    }
-
-    private func loadMore(location: DriveLocation, generation: Int) async {
-        guard !isLoadingMore, let token = nextPageToken else { return }
+        guard !isLoadingMore else { return }
         isLoadingMore = true
         defer { isLoadingMore = false }
+        _ = await fetchNextPage(location: currentLocation, generation: loadGeneration)
+    }
+
+    @discardableResult
+    private func loadRemainingPages(location: DriveLocation, generation: Int) async -> Bool {
+        guard !isLoadingMore else { return true }
+        isLoadingMore = true
+        defer { isLoadingMore = false }
+        var failed = false
+        while generation == loadGeneration, nextPageToken != nil, !Task.isCancelled {
+            let before = nextPageToken
+            let pageFailed = await fetchNextPage(location: location, generation: generation)
+            if pageFailed { failed = true }
+            if nextPageToken == before { break }
+        }
+        return failed || Task.isCancelled || generation != loadGeneration
+    }
+
+    private func fetchNextPage(location: DriveLocation, generation: Int) async -> Bool {
+        guard let token = nextPageToken else { return false }
         do {
             let page = try await client.listFiles(location: location, pageToken: token)
-            guard generation == loadGeneration, !Task.isCancelled else { return }
+            guard generation == loadGeneration, !Task.isCancelled else { return true }
             try await storePage(page, location: location, generation: generation, resetSeen: false)
             isOffline = false
+            return false
         } catch is CancellationError {
-            return
+            return true
         } catch let error as DriveAPIError where error == .cancelled {
-            return
+            return true
         } catch {
-            guard generation == loadGeneration else { return }
+            guard generation == loadGeneration else { return true }
             if DriveAPIError.isOffline(error) {
                 isOffline = true
             } else {
                 present(error)
             }
+            return true
         }
     }
 
@@ -927,9 +944,10 @@ final class BrowserModel: ObservableObject {
             let page = try await client.listFiles(location: location, pageToken: nil)
             guard !Task.isCancelled else { return }
             let sorted = ListingSorter.sort(page.files, key: location.cacheKey)
-            let listing = CachedListing(key: location.cacheKey, files: sorted, nextPageToken: page.nextPageToken, fetchedAt: Date())
+            let incoming = CachedListing(key: location.cacheKey, files: sorted, nextPageToken: page.nextPageToken, fetchedAt: Date())
+            let listing = ListingCacheWrite.resolve(existing: memory.listing(for: location.cacheKey), incoming: incoming)
             memory.store(listing)
-            metadata.remember(sorted)
+            metadata.remember(listing.files)
             try? await cache.saveListing(accountID: accountID, listing: listing)
             if currentLocation.cacheKey == location.cacheKey, files.isEmpty {
                 apply(listing)

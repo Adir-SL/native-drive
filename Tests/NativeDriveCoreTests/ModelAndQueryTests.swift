@@ -40,7 +40,7 @@ final class ModelAndQueryTests: XCTestCase {
         let mine = DriveQueryBuilder.filesList(for: .myDrive, pageToken: nil)
         XCTAssertEqual(mine.q, "'root' in parents and trashed = false")
         XCTAssertEqual(mine.corpora, "user")
-        XCTAssertEqual(mine.orderBy, "folder,name")
+        XCTAssertEqual(mine.orderBy, "name")
 
         let search = DriveQueryBuilder.filesList(for: .search(query: "tax report"), pageToken: "next")
         XCTAssertEqual(search.q, "(name contains 'tax report' or fullText contains 'tax report') and trashed = false")
