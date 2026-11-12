@@ -6,13 +6,15 @@ public struct DriveAccount: Codable, Equatable, Identifiable, Hashable, Sendable
     public var displayName: String?
     public var pictureURL: String?
     public var addedAt: Date
+    public var hostedDomain: String?
 
-    public init(id: String, email: String, displayName: String?, pictureURL: String?, addedAt: Date) {
+    public init(id: String, email: String, displayName: String?, pictureURL: String?, addedAt: Date, hostedDomain: String? = nil) {
         self.id = id
         self.email = email
         self.displayName = displayName
         self.pictureURL = pictureURL
         self.addedAt = addedAt
+        self.hostedDomain = hostedDomain
     }
 
     public var title: String {

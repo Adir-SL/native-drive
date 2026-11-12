@@ -46,6 +46,9 @@ final class BrowserModel: ObservableObject {
     private var pinnedIDs = Set<String>()
     @Published var renamingID: String?
     @Published var renameDraft = ""
+    @Published var shareSession: ShareSession?
+    var workspaceDomain: String?
+    private var collaborators = CollaboratorDirectory()
     private let thumbnails: ThumbnailFetcher
     private let network = NetworkConditions()
 
@@ -323,6 +326,32 @@ final class BrowserModel: ObservableObject {
         }
         mediaSession = session
         session.start()
+    }
+
+    func shareSelection() {
+        share(selectedFiles())
+    }
+
+    func share(_ file: DriveFile) {
+        share(targets(for: file))
+    }
+
+    func share(_ files: [DriveFile]) {
+        let chosen = files.isEmpty ? selectedFiles() : files
+        guard !chosen.isEmpty, shareSession == nil else { return }
+        let session = ShareSession(
+            files: chosen,
+            client: client,
+            domain: workspaceDomain,
+            suggestions: { [weak self] query in
+                self?.collaborators.suggestions(matching: query) ?? []
+            }
+        )
+        session.onRemember = { [weak self] permissions in
+            self?.collaborators.remember(permissions)
+        }
+        shareSession = session
+        Task { await session.load() }
     }
 
     func copyLink(_ file: DriveFile) {

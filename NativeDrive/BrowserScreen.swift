@@ -36,6 +36,9 @@ struct BrowserScreen: View {
         } message: {
             Text(browser.errorMessage ?? "")
         }
+        .sheet(item: $browser.shareSession) { session in
+            ShareSheet(session: session) { browser.shareSession = nil }
+        }
         .sheet(item: renameItem) { file in
             RenameSheet(name: file.name) {
                 browser.renameTarget = nil
@@ -82,6 +85,11 @@ struct BrowserScreen: View {
             }
             .disabled(browser.creationDeniedReason != nil)
             .help(browser.creationDeniedReason ?? "New")
+            Button { browser.shareSelection() } label: {
+                Label("Share", systemImage: "person.badge.plus")
+            }
+            .disabled(browser.selectedFiles().isEmpty)
+            .help("Share")
             if browser.isRefreshing {
                 ProgressView()
                     .controlSize(.small)

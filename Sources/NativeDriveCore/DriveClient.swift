@@ -1,7 +1,7 @@
 import Foundation
 
 public enum DriveFields {
-    public static let file = "id,name,mimeType,modifiedTime,viewedByMeTime,size,starred,trashed,parents,webViewLink,thumbnailLink,owners(displayName,me),md5Checksum,driveId,shortcutDetails(targetId,targetMimeType),capabilities(canAddChildren)"
+    public static let file = "id,name,mimeType,modifiedTime,viewedByMeTime,size,starred,trashed,parents,webViewLink,thumbnailLink,owners(displayName,me),md5Checksum,driveId,shortcutDetails(targetId,targetMimeType),writersCanShare,copyRequiresWriterPermission,capabilities(canAddChildren,canShare,canChangeCopyRequiresWriterPermission,canChangeViewersCanCopyContent)"
     public static let fileList = "files(\(file)),nextPageToken"
     public static let changeList = "changes(fileId,removed,file(\(file))),nextPageToken,newStartPageToken"
 }
@@ -102,6 +102,129 @@ public struct DriveClient: Sendable {
                 method: "GET",
                 url: try self.endpoint("/drive/v3/files/\(self.pathComponent(id))", query: items),
                 headers: self.bearer(token)
+            )
+        }
+        return try decode(DriveFile.self, from: response.body)
+    }
+
+    public func listPermissions(fileID: String) async throws -> [DrivePermission] {
+        var all: [DrivePermission] = []
+        var pageToken: String?
+        for _ in 0..<20 {
+            let query = PermissionRequests.listQuery(pageToken: pageToken)
+            let response = try await perform { token in
+                HTTPRequest(
+                    method: "GET",
+                    url: try self.endpoint("/drive/v3/files/\(self.pathComponent(fileID))/permissions", query: query),
+                    headers: self.bearer(token)
+                )
+            }
+            let page = try decode(PermissionListPayload.self, from: response.body)
+            all.append(contentsOf: page.permissions)
+            guard let next = page.nextPageToken, !next.isEmpty, next != pageToken else { break }
+            pageToken = next
+        }
+        return ShareList.sorted(all)
+    }
+
+    public func createPermission(
+        fileID: String,
+        permission: PermissionWrite,
+        sendNotification: Bool,
+        message: String?,
+        transferOwnership: Bool = false
+    ) async throws -> DrivePermission {
+        let body = try permission.encoded()
+        let query = PermissionRequests.createQuery(sendNotification: sendNotification, message: message, transferOwnership: transferOwnership)
+        let response = try await perform { token in
+            var headers = self.bearer(token)
+            headers["Content-Type"] = "application/json"
+            return HTTPRequest(
+                method: "POST",
+                url: try self.endpoint("/drive/v3/files/\(self.pathComponent(fileID))/permissions", query: query),
+                headers: headers,
+                body: body
+            )
+        }
+        return try decode(DrivePermission.self, from: response.body)
+    }
+
+    /// Tries a user grant, then a group grant when Drive says the address is a group.
+    public func grantAccess(
+        fileID: String,
+        email: String,
+        role: ShareRole,
+        notify: Bool,
+        message: String?,
+        expiration: Date?
+    ) async throws -> DrivePermission {
+        let user = PermissionWrite(
+            type: "user",
+            role: role.rawValue,
+            emailAddress: email,
+            expirationTime: role.allowsExpiration ? expiration : nil
+        )
+        do {
+            return try await createPermission(fileID: fileID, permission: user, sendNotification: notify, message: message)
+        } catch let error as DriveAPIError {
+            let text = (error.errorDescription ?? "").lowercased()
+            guard text.contains("group") else { throw error }
+            var group = user
+            group.type = "group"
+            return try await createPermission(fileID: fileID, permission: group, sendNotification: notify, message: message)
+        }
+    }
+
+    public func updatePermission(
+        fileID: String,
+        permissionID: String,
+        permission: PermissionWrite,
+        transferOwnership: Bool = false
+    ) async throws -> DrivePermission {
+        let body = try permission.encoded()
+        let query = PermissionRequests.updateQuery(transferOwnership: transferOwnership)
+        let response = try await perform { token in
+            var headers = self.bearer(token)
+            headers["Content-Type"] = "application/json"
+            return HTTPRequest(
+                method: "PATCH",
+                url: try self.endpoint("/drive/v3/files/\(self.pathComponent(fileID))/permissions/\(self.pathComponent(permissionID))", query: query),
+                headers: headers,
+                body: body
+            )
+        }
+        return try decode(DrivePermission.self, from: response.body)
+    }
+
+    public func deletePermission(fileID: String, permissionID: String) async throws {
+        let query = PermissionRequests.deleteQuery()
+        _ = try await perform { token in
+            HTTPRequest(
+                method: "DELETE",
+                url: try self.endpoint("/drive/v3/files/\(self.pathComponent(fileID))/permissions/\(self.pathComponent(permissionID))", query: query),
+                headers: self.bearer(token)
+            )
+        }
+    }
+
+    public func updateSharingSettings(
+        fileID: String,
+        writersCanShare: Bool?,
+        copyRequiresWriterPermission: Bool?
+    ) async throws -> DriveFile {
+        let body = try ShareSettings.body(writersCanShare: writersCanShare, copyRequiresWriterPermission: copyRequiresWriterPermission)
+        let items = [
+            URLQueryItem(name: "supportsAllDrives", value: "true"),
+            URLQueryItem(name: "fields", value: DriveFields.file)
+        ]
+        let response = try await perform { token in
+            var headers = self.bearer(token)
+            headers["Content-Type"] = "application/json"
+            return HTTPRequest(
+                method: "PATCH",
+                url: try self.endpoint("/drive/v3/files/\(self.pathComponent(fileID))", query: items),
+                headers: headers,
+                body: body
             )
         }
         return try decode(DriveFile.self, from: response.body)
@@ -592,6 +715,21 @@ public struct DriveClient: Sendable {
             return (message, json["error"] as? String)
         }
         return ("", nil)
+    }
+}
+
+private struct PermissionListPayload: Decodable {
+    var permissions: [DrivePermission]
+    var nextPageToken: String?
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        permissions = try container.decodeIfPresent([DrivePermission].self, forKey: .permissions) ?? []
+        nextPageToken = try container.decodeIfPresent(String.self, forKey: .nextPageToken)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case permissions, nextPageToken
     }
 }
 

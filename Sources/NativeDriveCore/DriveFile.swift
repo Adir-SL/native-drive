@@ -38,9 +38,20 @@ public struct ShortcutDetails: Codable, Equatable, Hashable, Sendable {
 
 public struct FileCapabilities: Codable, Equatable, Hashable, Sendable {
     public var canAddChildren: Bool?
+    public var canShare: Bool?
+    public var canChangeCopyRequiresWriterPermission: Bool?
+    public var canChangeViewersCanCopyContent: Bool?
 
-    public init(canAddChildren: Bool? = nil) {
+    public init(
+        canAddChildren: Bool? = nil,
+        canShare: Bool? = nil,
+        canChangeCopyRequiresWriterPermission: Bool? = nil,
+        canChangeViewersCanCopyContent: Bool? = nil
+    ) {
         self.canAddChildren = canAddChildren
+        self.canShare = canShare
+        self.canChangeCopyRequiresWriterPermission = canChangeCopyRequiresWriterPermission
+        self.canChangeViewersCanCopyContent = canChangeViewersCanCopyContent
     }
 }
 
@@ -62,6 +73,8 @@ public struct DriveFile: Identifiable, Equatable, Hashable, Sendable {
     public var driveId: String?
     public var shortcutDetails: ShortcutDetails?
     public var capabilities: FileCapabilities?
+    public var writersCanShare: Bool?
+    public var copyRequiresWriterPermission: Bool?
 
     public init(
         id: String,
@@ -80,7 +93,9 @@ public struct DriveFile: Identifiable, Equatable, Hashable, Sendable {
         md5Checksum: String? = nil,
         driveId: String? = nil,
         shortcutDetails: ShortcutDetails? = nil,
-        capabilities: FileCapabilities? = nil
+        capabilities: FileCapabilities? = nil,
+        writersCanShare: Bool? = nil,
+        copyRequiresWriterPermission: Bool? = nil
     ) {
         self.id = id
         self.name = name
@@ -99,6 +114,8 @@ public struct DriveFile: Identifiable, Equatable, Hashable, Sendable {
         self.driveId = driveId
         self.shortcutDetails = shortcutDetails
         self.capabilities = capabilities
+        self.writersCanShare = writersCanShare
+        self.copyRequiresWriterPermission = copyRequiresWriterPermission
     }
 
     public var isFolder: Bool { mimeType == DriveMime.folder }
@@ -134,6 +151,7 @@ extension DriveFile: Codable {
     private enum CodingKeys: String, CodingKey {
         case id, name, mimeType, modifiedTime, viewedByMeTime, size, starred, trashed, parents
         case webViewLink, iconLink, thumbnailLink, owners, md5Checksum, driveId, shortcutDetails, capabilities
+        case writersCanShare, copyRequiresWriterPermission
     }
 
     public init(from decoder: Decoder) throws {
@@ -155,6 +173,8 @@ extension DriveFile: Codable {
         driveId = try container.decodeIfPresent(String.self, forKey: .driveId)
         shortcutDetails = try container.decodeIfPresent(ShortcutDetails.self, forKey: .shortcutDetails)
         capabilities = try container.decodeIfPresent(FileCapabilities.self, forKey: .capabilities)
+        writersCanShare = try container.decodeIfPresent(Bool.self, forKey: .writersCanShare)
+        copyRequiresWriterPermission = try container.decodeIfPresent(Bool.self, forKey: .copyRequiresWriterPermission)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -176,6 +196,8 @@ extension DriveFile: Codable {
         try container.encodeIfPresent(driveId, forKey: .driveId)
         try container.encodeIfPresent(shortcutDetails, forKey: .shortcutDetails)
         try container.encodeIfPresent(capabilities, forKey: .capabilities)
+        try container.encodeIfPresent(writersCanShare, forKey: .writersCanShare)
+        try container.encodeIfPresent(copyRequiresWriterPermission, forKey: .copyRequiresWriterPermission)
     }
 }
 

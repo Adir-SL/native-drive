@@ -43,6 +43,9 @@ struct NativeDriveCommands: Commands {
             Button("Move to Trash") { model.browser?.trashSelection() }
                 .keyboardShortcut(.delete, modifiers: .command)
                 .disabled(model.browser == nil)
+            Button("Share…") { model.browser?.shareSelection() }
+                .keyboardShortcut("s", modifiers: [.command, .shift])
+                .disabled(model.browser?.selectedFiles().isEmpty != false)
             Button("Copy Link") { model.browser?.copyLinkSelection() }
                 .keyboardShortcut("c", modifiers: [.command, .shift])
                 .disabled(model.browser == nil)

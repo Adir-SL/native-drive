@@ -99,7 +99,8 @@ final class AppModel: ObservableObject {
                     email: email,
                     displayName: user.displayName ?? IDTokenClaims.string("name", jwt: tokens.idToken ?? ""),
                     pictureURL: user.photoLink,
-                    addedAt: Date()
+                    addedAt: Date(),
+                    hostedDomain: ShareAccount.workspaceDomain(email: email, idToken: tokens.idToken)
                 )
                 try await accountStore.upsert(account)
                 accounts = await accountStore.list()
@@ -153,11 +154,28 @@ final class AppModel: ObservableObject {
             let provider = RefreshingTokenProvider(accountID: id, config: AppConfig.oauthConfig() ?? OAuthClientConfig(clientID: "", clientSecret: nil, redirectURI: ""), store: tokenStore, http: http)
             let client = DriveClient(http: http, auth: provider)
             let model = BrowserModel(accountID: id, client: client, cache: cache, transfers: transfers, downloadRoot: downloadRoot)
+            model.workspaceDomain = await hostedDomain(for: id)
             browsers[id] = model
             objectWillChange.send()
             await model.restore()
         } else {
+            browsers[id]?.workspaceDomain = await hostedDomain(for: id)
             objectWillChange.send()
         }
+    }
+
+    private func hostedDomain(for id: String) async -> String? {
+        if let existing = accounts.first(where: { $0.id == id })?.hostedDomain, !existing.isEmpty {
+            return existing
+        }
+        guard let tokens = try? await tokenStore.load(for: id) else { return nil }
+        let email = accounts.first(where: { $0.id == id })?.email
+        guard let domain = ShareAccount.workspaceDomain(email: email, idToken: tokens.idToken) else { return nil }
+        if var account = accounts.first(where: { $0.id == id }) {
+            account.hostedDomain = domain
+            try? await accountStore.upsert(account)
+            accounts = await accountStore.list()
+        }
+        return domain
     }
 }

@@ -71,6 +71,10 @@ enum KeyRouting {
             browser.makeNew(.folder)
             return true
         }
+        if flags == [.command, .shift] && event.keyCode == 1 {
+            browser.shareSelection()
+            return true
+        }
         return false
     }
 }

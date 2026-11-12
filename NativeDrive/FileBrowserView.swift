@@ -177,6 +177,7 @@ struct FileBrowserView: View {
         Button(file.starred ? "Unstar" : "Star") { Task { await browser.toggleStar(file) } }
             .disabled(targets.count != 1)
         Button("Move to Trash") { Task { await browser.trash(targets) } }
+        Button("Share…") { browser.share(file) }
         Button("Copy Link") { browser.copyLink(file) }
     }
 }
