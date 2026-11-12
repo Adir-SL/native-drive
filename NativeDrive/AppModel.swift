@@ -73,9 +73,46 @@ final class AppModel: ObservableObject {
         guard !didStart else { return }
         didStart = true
         accounts = await accountStore.list()
+        await backfillEmails()
         if let id = accounts.first?.id {
             await activate(id)
         }
+    }
+
+    /// Existing sign-ins keep their tokens. Only accounts saved without an address are refreshed.
+    private func backfillEmails() async {
+        var changed = false
+        for account in accounts {
+            guard let updated = await refreshedIdentity(for: account) else { continue }
+            try? await accountStore.upsert(updated)
+            changed = true
+        }
+        if changed {
+            accounts = await accountStore.list()
+        }
+    }
+
+    private func refreshedIdentity(for account: DriveAccount) async -> DriveAccount? {
+        guard !AccountIdentity.isEmail(account.email) else { return nil }
+        let config = AppConfig.oauthConfig() ?? OAuthClientConfig(clientID: "", clientSecret: nil, redirectURI: "")
+        let provider = RefreshingTokenProvider(accountID: account.id, config: config, store: tokenStore, http: http)
+        let client = DriveClient(http: http, auth: provider)
+        let about = try? await client.aboutUser()
+        var info: GoogleUserInfo?
+        if !AccountIdentity.isEmail(about?.emailAddress ?? "") {
+            info = try? await client.userInfo()
+        }
+        let tokens = try? await tokenStore.load(for: account.id)
+        return AccountEmailMigration.resolve(
+            stored: account,
+            aboutEmail: about?.emailAddress,
+            aboutName: about?.displayName,
+            aboutPicture: about?.photoLink,
+            userInfoEmail: info?.email,
+            userInfoName: info?.name,
+            userInfoPicture: info?.picture,
+            idToken: tokens?.idToken
+        )
     }
 
     func addAccount() {

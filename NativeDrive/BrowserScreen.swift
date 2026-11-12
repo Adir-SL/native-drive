@@ -22,6 +22,7 @@ struct BrowserScreen: View {
             }
         }
         .navigationTitle(browser.title)
+        .navigationSubtitle(model.activeAccount?.title ?? "")
         .toolbar { toolbar }
         .searchable(text: searchText, placement: .toolbar, prompt: "Search in Drive")
         .inspector(isPresented: $transfers.isPresented) {
@@ -138,11 +139,12 @@ struct AccountMenu: View {
                     model.selectAccount(id: account.id)
                 } label: {
                     if account.id == model.activeAccountID {
-                        Label(account.email, systemImage: "checkmark")
+                        Label(account.title, systemImage: "checkmark")
                     } else {
-                        Text(account.email)
+                        Text(account.title)
                     }
                 }
+                .help(account.subtitle ?? account.title)
             }
             Divider()
             Button(model.isSigningIn ? "Waiting for Google…" : "Add Account…") {
@@ -156,11 +158,16 @@ struct AccountMenu: View {
                 Image(systemName: "person.crop.circle")
                 VStack(alignment: .leading, spacing: 0) {
                     Text(model.activeAccount?.title ?? "No account")
-                    if let email = model.activeAccount?.email {
-                        Text(email).font(.caption).foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    if let name = model.activeAccount?.subtitle {
+                        Text(name)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
                     }
                 }
             }
+            .help(model.activeAccount?.subtitle ?? model.activeAccount?.title ?? "Account")
         }
         .menuStyle(.borderlessButton)
         .fixedSize()

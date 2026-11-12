@@ -17,6 +17,7 @@ struct NativeDriveApp: App {
         }
         Settings {
             SettingsView()
+                .environmentObject(model)
         }
     }
 }
@@ -125,8 +126,9 @@ struct NativeDriveCommands: Commands {
         }
         CommandMenu("Account") {
             ForEach(Array(model.accounts.prefix(9).enumerated()), id: \.element.id) { index, account in
-                Button(account.email) { model.selectAccount(at: index) }
+                Button(account.title) { model.selectAccount(at: index) }
                     .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: [.command, .option])
+                    .help(account.subtitle ?? account.title)
             }
             if !model.accounts.isEmpty {
                 Divider()

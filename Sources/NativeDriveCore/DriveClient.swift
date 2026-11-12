@@ -276,6 +276,14 @@ public struct DriveClient: Sendable {
         return try decode(AboutPayload.self, from: response.body).user
     }
 
+    /// OpenID userinfo. Used when about.get omits `emailAddress` for an account that is already signed in.
+    public func userInfo() async throws -> GoogleUserInfo {
+        let response = try await perform { token in
+            HTTPRequest(method: "GET", url: try self.endpoint("/oauth2/v3/userinfo", query: []), headers: self.bearer(token))
+        }
+        return try decode(GoogleUserInfo.self, from: response.body)
+    }
+
     public func startPageToken() async throws -> String {
         let items = [URLQueryItem(name: "supportsAllDrives", value: "true")]
         let response = try await perform { token in
@@ -759,6 +767,12 @@ public struct SharedDrive: Codable, Equatable, Identifiable, Hashable, Sendable 
         self.id = id
         self.name = name
     }
+}
+
+public struct GoogleUserInfo: Decodable, Equatable, Sendable {
+    public var email: String?
+    public var name: String?
+    public var picture: String?
 }
 
 private struct AboutPayload: Decodable {

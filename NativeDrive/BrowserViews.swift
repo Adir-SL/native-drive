@@ -94,6 +94,7 @@ final class FolderSortStore: ObservableObject {
 }
 
 struct SettingsView: View {
+    @EnvironmentObject private var model: AppModel
     @AppStorage(BrowserPreference.viewMode) private var viewMode = BrowserViewMode.list.rawValue
     @AppStorage(BrowserPreference.folderColors) private var folderColors = true
     @AppStorage(BrowserPreference.showPreview) private var showPreview = true
@@ -107,6 +108,21 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
+            if !model.accounts.isEmpty {
+                Section("Accounts") {
+                    ForEach(model.accounts) { account in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(account.title)
+                            if let name = account.subtitle {
+                                Text(name)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .help(account.subtitle ?? account.title)
+                    }
+                }
+            }
             Picker("Default view", selection: $viewMode) {
                 ForEach(BrowserViewMode.allCases) { mode in
                     Text(mode.name).tag(mode.rawValue)
@@ -125,7 +141,7 @@ struct SettingsView: View {
             Toggle("Show status bar", isOn: $showStatus)
         }
         .formStyle(.grouped)
-        .frame(width: 440, height: 400)
+        .frame(width: 460, height: 480)
     }
 }
 
