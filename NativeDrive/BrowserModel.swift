@@ -159,6 +159,58 @@ final class BrowserModel: ObservableObject {
         return await thumbnails.image(for: resolved, edge: edge)
     }
 
+    func previewDetails(_ file: DriveFile) async -> DriveFile? {
+        try? await client.getFile(id: file.id)
+    }
+
+    /// Downloads a media file into the same cache the viewer uses, without revealing it in Finder.
+    func preparePreviewFile(_ file: DriveFile) async throws -> URL {
+        let destination = localURL(for: file)
+        if FileManager.default.fileExists(atPath: destination.path) {
+            let attributes = try? FileManager.default.attributesOfItem(atPath: destination.path)
+            let size = (attributes?[.size] as? NSNumber)?.int64Value ?? 0
+            if size > 0, file.size == nil || file.size == size {
+                return destination
+            }
+            try? FileManager.default.removeItem(at: destination)
+        }
+        try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try await client.download(fileID: file.id, to: destination) { _, _ in }
+        return destination
+    }
+
+    /// Contents of a folder that is not the one currently open, for column view. Uses the same cache as the main listing.
+    func listingForColumn(_ location: DriveLocation) async -> [DriveFile] {
+        if location.cacheKey == currentLocation.cacheKey {
+            return files
+        }
+        if let hit = memory.listing(for: location.cacheKey), hit.isComplete {
+            return hit.files
+        }
+        if memory.listing(for: location.cacheKey) == nil,
+           let disk = try? await cache.listing(accountID: accountID, key: location.cacheKey) {
+            memory.store(disk)
+            if disk.isComplete { return disk.files }
+        }
+        do {
+            var pages: [FilePage] = []
+            var token: String?
+            for _ in 0..<30 {
+                let page = try await client.listFiles(location: location, pageToken: token)
+                pages.append(page)
+                token = page.nextPageToken
+                if token == nil { break }
+            }
+            let collected = ListingWalk.accumulate(pages: pages, key: location.cacheKey)
+            let stored = ListingCacheWrite.resolve(existing: memory.listing(for: location.cacheKey), incoming: collected)
+            memory.store(stored)
+            try? await cache.saveListing(accountID: accountID, listing: stored)
+            return stored.files
+        } catch {
+            return memory.listing(for: location.cacheKey)?.files ?? []
+        }
+    }
+
     func updateSearchText(_ text: String) {
         guard text != searchText else { return }
         searchText = text
@@ -667,12 +719,16 @@ final class BrowserModel: ObservableObject {
         return [file]
     }
 
-    func loadMoreIfNeeded(currentID: String) {
-        guard files.last?.id == currentID else { return }
+    func loadMoreIfNeeded(currentID: String, isLastVisible: Bool = false) {
+        guard nextPageToken != nil else { return }
+        guard isLastVisible || files.last?.id == currentID else { return }
         Task { await loadMore() }
     }
 
-    private func scheduleReload(forceFull: Bool) {
+    private var pendingColumnSelection: String?
+
+    private func scheduleReload(forceFull: Bool, restoring selectionID: String? = nil) {
+        pendingColumnSelection = selectionID
         hoveredFolderID = nil
         loadTask?.cancel()
         loadGeneration += 1
@@ -684,7 +740,11 @@ final class BrowserModel: ObservableObject {
         } else {
             files = []
             nextPageToken = nil
-            selection = []
+            if let selectionID {
+                selection = [selectionID]
+            } else {
+                selection = []
+            }
             isRefreshing = true
         }
         refreshDesiredPrefetch()
@@ -957,6 +1017,24 @@ final class BrowserModel: ObservableObject {
         }
     }
 
+    func openColumnFolder(_ file: DriveFile, columnIndex: Int) {
+        let isFolder = file.isFolder || (file.isShortcut && file.shortcutDetails?.targetMimeType == DriveMime.folder)
+        var folders = Array(path.folders.prefix(columnIndex))
+        if isFolder {
+            let id = file.isShortcut ? (file.shortcutDetails?.targetId ?? file.id) : file.id
+            folders.append(PathFolder(id: id, name: file.name, canAddChildren: file.isShortcut ? nil : file.capabilities?.canAddChildren))
+        }
+        let target = BrowsePath(root: path.root, folders: folders)
+        if target != path {
+            clearSearchSilently()
+            navigation.replace(path: target)
+            scheduleReload(forceFull: false, restoring: isFolder ? nil : file.id)
+        }
+        if !isFolder {
+            selection = [file.id]
+        }
+    }
+
     private func navigateToFolder(id: String, name: String, driveID: String?, canAddChildren: Bool?) {
         clearSearchSilently()
         if let driveID, path.root.sharedDriveID != driveID {
@@ -1028,7 +1106,13 @@ final class BrowserModel: ObservableObject {
             nextPageToken = listing.nextPageToken
         }
         let valid = Set(next.map(\.id))
-        if selection.contains(where: { !valid.contains($0) }) {
+        if let pending = pendingColumnSelection, valid.contains(pending) {
+            selection = [pending]
+            pendingColumnSelection = nil
+        } else if let pending = pendingColumnSelection, listing.isComplete, !valid.contains(pending) {
+            pendingColumnSelection = nil
+            selection = selection.intersection(valid)
+        } else if pendingColumnSelection == nil, selection.contains(where: { !valid.contains($0) }) {
             selection = selection.intersection(valid)
         }
         metadata.remember(next)

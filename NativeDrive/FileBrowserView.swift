@@ -6,6 +6,8 @@ import UniformTypeIdentifiers
 struct FileBrowserView: View {
     @ObservedObject var browser: BrowserModel
     @State private var dropTargeted = false
+    @AppStorage(BrowserPreference.showPath) private var showPath = true
+    @AppStorage(BrowserPreference.showStatus) private var showStatus = true
 
     var body: some View {
         VStack(spacing: 0) {
@@ -20,9 +22,10 @@ struct FileBrowserView: View {
                 .padding(.vertical, 6)
                 .background(.quaternary)
             }
-            breadcrumb
-            Divider()
-            table
+            if showPath { breadcrumb }
+            if showPath { Divider() }
+            FileArrangementViews(browser: browser)
+            if showStatus { statusBar }
         }
         .contextMenu {
             if browser.creationDeniedReason == nil {
@@ -70,6 +73,29 @@ struct FileBrowserView: View {
         }
     }
 
+    private var statusBar: some View {
+        HStack {
+            Text("\(browser.files.count) items")
+            if !browser.selection.isEmpty {
+                Text("· \(browser.selection.count) selected")
+            }
+            Spacer()
+            if BrowserViewMode(rawValue: viewMode) == .icon || BrowserViewMode(rawValue: viewMode) == .gallery {
+                Slider(value: $iconSize, in: 48...160, step: 8)
+                    .frame(width: 120)
+                    .help("Icon size")
+            }
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 4)
+        .background(.bar)
+    }
+
+    @AppStorage(BrowserPreference.viewMode) private var viewMode = BrowserViewMode.list.rawValue
+    @AppStorage(BrowserPreference.iconSize) private var iconSize = 72.0
+
     private func crumbButton(_ title: String, isCurrent: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
@@ -77,132 +103,6 @@ struct FileBrowserView: View {
                 .lineLimit(1)
         }
         .buttonStyle(.plain)
-    }
-
-    @ViewBuilder
-    private var table: some View {
-        if browser.files.isEmpty && browser.isRefreshing {
-            skeleton
-        } else if browser.files.isEmpty {
-            ContentUnavailableView(
-                browser.activeSearch == nil ? "Empty" : "No results",
-                systemImage: browser.activeSearch == nil ? "folder" : "magnifyingglass",
-                description: Text(browser.activeSearch == nil ? "This folder doesn't have any files." : "Try a different name or phrase.")
-            )
-        } else {
-            Table(browser.files, selection: $browser.selection) {
-                TableColumn("Name") { file in
-                    HStack(spacing: 8) {
-                        RowThumbnail(file: file, browser: browser)
-                        if browser.renamingID == file.id {
-                            InlineNameField(browser: browser)
-                        } else {
-                            Text(file.name)
-                                .lineLimit(1)
-                        }
-                    }
-                    .onTapGesture(count: 2) { Task { await browser.open(file) } }
-                    .onHover { browser.hover(file, inside: $0) }
-                    .contextMenu { contextMenu(for: file) }
-                    .onDrag { browser.dragProvider(for: file) }
-                    .dropDestination(for: URL.self) { urls, _ in
-                        guard file.isFolder, file.capabilities?.canAddChildren != false else { return false }
-                        browser.upload(urls: urls, parentID: file.id)
-                        return true
-                    }
-                    .onAppear { browser.loadMoreIfNeeded(currentID: file.id) }
-                }
-                .width(min: 240, ideal: 420)
-
-                TableColumn("Date Modified") { file in
-                    Text(file.modifiedTime?.formatted(date: .abbreviated, time: .shortened) ?? "—")
-                        .foregroundStyle(.secondary)
-                        .contextMenu { contextMenu(for: file) }
-                        .onTapGesture(count: 2) { Task { await browser.open(file) } }
-                }
-                .width(min: 140, ideal: 180)
-
-                TableColumn("Size") { file in
-                    Text(file.size.map(ByteFormatting.string) ?? "—")
-                        .monospacedDigit()
-                        .foregroundStyle(.secondary)
-                        .contextMenu { contextMenu(for: file) }
-                        .onTapGesture(count: 2) { Task { await browser.open(file) } }
-                }
-                .width(min: 70, ideal: 90)
-
-                TableColumn("Owner") { file in
-                    Text(file.ownerLabel)
-                        .lineLimit(1)
-                        .foregroundStyle(.secondary)
-                        .contextMenu { contextMenu(for: file) }
-                        .onTapGesture(count: 2) { Task { await browser.open(file) } }
-                }
-                .width(min: 120, ideal: 180)
-            }
-            .transaction { $0.animation = nil }
-            .onChange(of: browser.selection) { _, _ in
-                browser.prefetchSelection()
-            }
-        }
-    }
-
-    private var skeleton: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            ForEach(0..<8, id: \.self) { _ in
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(.quaternary)
-                    .frame(height: 14)
-            }
-            Spacer()
-        }
-        .padding(20)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-    }
-
-    @ViewBuilder
-    private func contextMenu(for file: DriveFile) -> some View {
-        let targets = browser.targets(for: file)
-        Button("Open") { Task { await browser.open(file) } }
-        Button("Download…") {
-            if targets.count == 1 {
-                browser.selection = [file.id]
-            }
-            browser.downloadSelection()
-        }
-        .disabled(file.isGoogleNative && targets.count == 1)
-        Divider()
-        Button("Rename…") { browser.renameTarget = file }
-            .disabled(targets.count != 1)
-        Button(file.starred ? "Unstar" : "Star") { Task { await browser.toggleStar(file) } }
-            .disabled(targets.count != 1)
-        Button("Move to Trash") { Task { await browser.trash(targets) } }
-        Button("Share…") { browser.share(file) }
-        Button("Copy Link") { browser.copyLink(file) }
-    }
-}
-
-private struct RowThumbnail: View {
-    let file: DriveFile
-    @ObservedObject var browser: BrowserModel
-    @State private var image: NSImage?
-
-    var body: some View {
-        Group {
-            if let image, MediaClassifier.kind(of: file) == .image {
-                Image(nsImage: image)
-                    .resizable()
-                    .scaledToFill()
-            } else {
-                FileTypeIcon(file: file)
-            }
-        }
-        .frame(width: 18, height: 18)
-        .clipShape(RoundedRectangle(cornerRadius: 2))
-        .task(id: file.id) {
-            guard MediaClassifier.kind(of: file) == .image else { return }
-            image = await browser.thumbnail(for: file, edge: ThumbnailPlan.rowEdge)
-        }
     }
 }
 
@@ -223,7 +123,7 @@ struct NewItemMenu: View {
     }
 }
 
-private struct InlineNameField: View {
+struct InlineNameField: View {
     @ObservedObject var browser: BrowserModel
     @FocusState private var focused: Bool
 

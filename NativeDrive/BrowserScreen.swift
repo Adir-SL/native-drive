@@ -5,6 +5,9 @@ struct BrowserScreen: View {
     @EnvironmentObject private var model: AppModel
     @ObservedObject var browser: BrowserModel
     @ObservedObject var transfers: TransferCenter
+    @AppStorage(BrowserPreference.viewMode) private var viewModeRaw = BrowserViewMode.list.rawValue
+
+    private var viewMode: Binding<String> { $viewModeRaw }
 
     var body: some View {
         NavigationSplitView {
@@ -76,6 +79,9 @@ struct BrowserScreen: View {
         }
         ToolbarItem(placement: .principal) {
             AccountMenu()
+        }
+        ToolbarItem(placement: .principal) {
+            FinderToolbarViews(mode: viewMode)
         }
         ToolbarItemGroup(placement: .primaryAction) {
             Menu {

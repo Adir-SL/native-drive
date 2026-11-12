@@ -1,4 +1,5 @@
 import SwiftUI
+import NativeDriveCore
 
 @main
 struct NativeDriveApp: App {
@@ -14,11 +15,41 @@ struct NativeDriveApp: App {
         .commands {
             NativeDriveCommands(model: model)
         }
+        Settings {
+            SettingsView()
+        }
     }
 }
 
 struct NativeDriveCommands: Commands {
     @ObservedObject var model: AppModel
+    @AppStorage(BrowserPreference.viewMode) private var viewMode = BrowserViewMode.list.rawValue
+    @AppStorage(BrowserPreference.folderColors) private var folderColors = true
+    @AppStorage(BrowserPreference.showPreview) private var showPreview = true
+    @AppStorage(BrowserPreference.videoPreviews) private var videoPreviews = true
+    @AppStorage(BrowserPreference.foldersFirst) private var foldersFirst = true
+    @AppStorage(BrowserPreference.showPath) private var showPath = true
+    @AppStorage(BrowserPreference.showStatus) private var showStatus = true
+    @AppStorage(BrowserPreference.useGroups) private var useGroups = false
+    @ObservedObject private var sorts = FolderSortStore.shared
+
+    private var folderKey: String { model.browser?.currentLocation.cacheKey ?? "myDrive" }
+    private var currentSort: FileSort { sorts.sort(for: folderKey, foldersFirst: foldersFirst) }
+
+    @ViewBuilder
+    private var viewModeButtons: some View {
+        ForEach(BrowserViewMode.allCases) { mode in
+            Toggle(mode.title, isOn: Binding(
+                get: { viewMode == mode.rawValue },
+                set: { if $0 { viewMode = mode.rawValue } }
+            ))
+            .keyboardShortcut(mode.shortcut, modifiers: .command)
+        }
+    }
+
+    private func setSort(_ key: FileSortKey) {
+        sorts.update(currentSort.toggled(key), for: folderKey)
+    }
 
     var body: some Commands {
         CommandGroup(after: .newItem) {
@@ -50,6 +81,31 @@ struct NativeDriveCommands: Commands {
                 .keyboardShortcut("c", modifiers: [.command, .shift])
                 .disabled(model.browser == nil)
         }
+        CommandMenu("View") {
+            viewModeButtons
+            Divider()
+            Toggle("Show Path Bar", isOn: $showPath)
+            Toggle("Show Status Bar", isOn: $showStatus)
+            Toggle("Show Preview", isOn: $showPreview)
+            Toggle("Video Previews", isOn: $videoPreviews)
+            Toggle("Folder Colors", isOn: $folderColors)
+            Toggle("Show Folders First", isOn: $foldersFirst)
+            Toggle("Use Groups", isOn: $useGroups)
+            Divider()
+            Menu("Sort By") {
+                ForEach(FileSortKey.allCases) { key in
+                    Button {
+                        setSort(key)
+                    } label: {
+                        if currentSort.key == key {
+                            Label(key.title, systemImage: currentSort.ascending ? "chevron.up" : "chevron.down")
+                        } else {
+                            Text(key.title)
+                        }
+                    }
+                }
+            }
+        }
         CommandMenu("Go") {
             Button("Back") { model.browser?.goBack() }
                 .keyboardShortcut("[", modifiers: .command)
@@ -68,7 +124,7 @@ struct NativeDriveCommands: Commands {
         CommandMenu("Account") {
             ForEach(Array(model.accounts.prefix(9).enumerated()), id: \.element.id) { index, account in
                 Button(account.email) { model.selectAccount(at: index) }
-                    .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: .command)
+                    .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: [.command, .option])
             }
             if !model.accounts.isEmpty {
                 Divider()

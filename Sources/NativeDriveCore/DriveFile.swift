@@ -100,6 +100,7 @@ public struct DriveFile: Identifiable, Equatable, Hashable, Sendable {
     public var webViewLink: String?
     public var iconLink: String?
     public var thumbnailLink: String?
+    public var folderColorRgb: String?
     public var owners: [DriveUser]
     public var md5Checksum: String?
     public var driveId: String?
@@ -107,6 +108,9 @@ public struct DriveFile: Identifiable, Equatable, Hashable, Sendable {
     public var capabilities: FileCapabilities?
     public var writersCanShare: Bool?
     public var copyRequiresWriterPermission: Bool?
+    public var pixelWidth: Int?
+    public var pixelHeight: Int?
+    public var durationMillis: Int64?
 
     public init(
         id: String,
@@ -121,13 +125,17 @@ public struct DriveFile: Identifiable, Equatable, Hashable, Sendable {
         webViewLink: String? = nil,
         iconLink: String? = nil,
         thumbnailLink: String? = nil,
+        folderColorRgb: String? = nil,
         owners: [DriveUser] = [],
         md5Checksum: String? = nil,
         driveId: String? = nil,
         shortcutDetails: ShortcutDetails? = nil,
         capabilities: FileCapabilities? = nil,
         writersCanShare: Bool? = nil,
-        copyRequiresWriterPermission: Bool? = nil
+        copyRequiresWriterPermission: Bool? = nil,
+        pixelWidth: Int? = nil,
+        pixelHeight: Int? = nil,
+        durationMillis: Int64? = nil
     ) {
         self.id = id
         self.name = name
@@ -141,6 +149,7 @@ public struct DriveFile: Identifiable, Equatable, Hashable, Sendable {
         self.webViewLink = webViewLink
         self.iconLink = iconLink
         self.thumbnailLink = thumbnailLink
+        self.folderColorRgb = folderColorRgb
         self.owners = owners
         self.md5Checksum = md5Checksum
         self.driveId = driveId
@@ -148,6 +157,9 @@ public struct DriveFile: Identifiable, Equatable, Hashable, Sendable {
         self.capabilities = capabilities
         self.writersCanShare = writersCanShare
         self.copyRequiresWriterPermission = copyRequiresWriterPermission
+        self.pixelWidth = pixelWidth
+        self.pixelHeight = pixelHeight
+        self.durationMillis = durationMillis
     }
 
     public var isFolder: Bool { mimeType == DriveMime.folder }
@@ -182,8 +194,51 @@ public struct DriveFile: Identifiable, Equatable, Hashable, Sendable {
 extension DriveFile: Codable {
     private enum CodingKeys: String, CodingKey {
         case id, name, mimeType, modifiedTime, viewedByMeTime, size, starred, trashed, parents
-        case webViewLink, iconLink, thumbnailLink, owners, md5Checksum, driveId, shortcutDetails, capabilities
+        case webViewLink, iconLink, thumbnailLink, folderColorRgb, owners, md5Checksum, driveId, shortcutDetails, capabilities
         case writersCanShare, copyRequiresWriterPermission
+        case imageMediaMetadata, videoMediaMetadata
+    }
+
+    private struct MediaFrame: Codable {
+        var width: Int?
+        var height: Int?
+        var durationMillis: Int64?
+
+        private enum FrameKey: String, CodingKey {
+            case width, height, durationMillis
+        }
+
+        init(width: Int?, height: Int?, durationMillis: Int64?) {
+            self.width = width
+            self.height = height
+            self.durationMillis = durationMillis
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: FrameKey.self)
+            width = Self.flexibleInt(container, .width)
+            height = Self.flexibleInt(container, .height)
+            durationMillis = Self.flexibleInt64(container, .durationMillis)
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: FrameKey.self)
+            try container.encodeIfPresent(width, forKey: .width)
+            try container.encodeIfPresent(height, forKey: .height)
+            try container.encodeIfPresent(durationMillis, forKey: .durationMillis)
+        }
+
+        private static func flexibleInt(_ container: KeyedDecodingContainer<FrameKey>, _ key: FrameKey) -> Int? {
+            if let number = try? container.decodeIfPresent(Int.self, forKey: key) { return number }
+            if let text = try? container.decodeIfPresent(String.self, forKey: key) { return Int(text) }
+            return nil
+        }
+
+        private static func flexibleInt64(_ container: KeyedDecodingContainer<FrameKey>, _ key: FrameKey) -> Int64? {
+            if let number = try? container.decodeIfPresent(Int64.self, forKey: key) { return number }
+            if let text = try? container.decodeIfPresent(String.self, forKey: key) { return Int64(text) }
+            return nil
+        }
     }
 
     public init(from decoder: Decoder) throws {
@@ -200,6 +255,7 @@ extension DriveFile: Codable {
         webViewLink = try container.decodeIfPresent(String.self, forKey: .webViewLink)
         iconLink = try container.decodeIfPresent(String.self, forKey: .iconLink)
         thumbnailLink = try container.decodeIfPresent(String.self, forKey: .thumbnailLink)
+        folderColorRgb = try container.decodeIfPresent(String.self, forKey: .folderColorRgb)
         owners = try container.decodeIfPresent([DriveUser].self, forKey: .owners) ?? []
         md5Checksum = try container.decodeIfPresent(String.self, forKey: .md5Checksum)
         driveId = try container.decodeIfPresent(String.self, forKey: .driveId)
@@ -207,6 +263,11 @@ extension DriveFile: Codable {
         capabilities = try container.decodeIfPresent(FileCapabilities.self, forKey: .capabilities)
         writersCanShare = try container.decodeIfPresent(Bool.self, forKey: .writersCanShare)
         copyRequiresWriterPermission = try container.decodeIfPresent(Bool.self, forKey: .copyRequiresWriterPermission)
+        let image = try? container.decodeIfPresent(MediaFrame.self, forKey: .imageMediaMetadata)
+        let video = try? container.decodeIfPresent(MediaFrame.self, forKey: .videoMediaMetadata)
+        pixelWidth = image?.width ?? video?.width
+        pixelHeight = image?.height ?? video?.height
+        durationMillis = video?.durationMillis
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -223,6 +284,7 @@ extension DriveFile: Codable {
         try container.encodeIfPresent(webViewLink, forKey: .webViewLink)
         try container.encodeIfPresent(iconLink, forKey: .iconLink)
         try container.encodeIfPresent(thumbnailLink, forKey: .thumbnailLink)
+        try container.encodeIfPresent(folderColorRgb, forKey: .folderColorRgb)
         try container.encode(owners, forKey: .owners)
         try container.encodeIfPresent(md5Checksum, forKey: .md5Checksum)
         try container.encodeIfPresent(driveId, forKey: .driveId)
@@ -230,6 +292,12 @@ extension DriveFile: Codable {
         try container.encodeIfPresent(capabilities, forKey: .capabilities)
         try container.encodeIfPresent(writersCanShare, forKey: .writersCanShare)
         try container.encodeIfPresent(copyRequiresWriterPermission, forKey: .copyRequiresWriterPermission)
+        if durationMillis == nil, pixelWidth != nil || pixelHeight != nil {
+            try container.encode(MediaFrame(width: pixelWidth, height: pixelHeight, durationMillis: nil), forKey: .imageMediaMetadata)
+        }
+        if durationMillis != nil {
+            try container.encode(MediaFrame(width: pixelWidth, height: pixelHeight, durationMillis: durationMillis), forKey: .videoMediaMetadata)
+        }
     }
 }
 
